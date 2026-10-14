@@ -164,6 +164,49 @@ assert_sources_disagree() {  # <target> <label>
     "$2: the two name sources were expected to disagree, but title=$t comms=$c (title='$(fm_backend_tmux_current_command "$1")' comms='$(fm_backend_tmux_foreground_comms "$1" | tr '\n' ' ')')"
 }
 
+# A native interpreter stand-in keeps real argv boundaries without needing Bun
+# or Node in portable CI. Neither its title nor its executable names Pi.
+if [ -n "$CC_BIN" ]; then
+  ln -s "$STANDIN_BIN" "$LAB/bin/bun"
+  new_window pi-interpreted "$LAB/bin/bun" "$LAB/bin/pi" --prompt 'fixture'
+  title_classifies_agent "$SESSION:pi-interpreted" && fail 'fixture title already identifies Pi'
+  comms_classify_agent "$SESSION:pi-interpreted" && fail 'fixture process name already identifies Pi'
+  wait_for_state "$SESSION:pi-interpreted" alive 5 \
+    || fail 'Pi launched by Bun must classify alive from its script argument'
+  pi_pid=$("$REAL_TMUX" -L "$SOCKET" display-message -p -t "$SESSION:pi-interpreted" '#{pane_pid}')
+  [ "$("$ROOT/bin/fm-harness.sh" ancestry "$pi_pid")" = 'comm pi' ] \
+    || fail 'Pi interpreter entrypoint must also identify its harness ancestry'
+  for script in "$LAB/bin/other.js" "$LAB/pi/helper.js" --eval; do
+    new_window pi-decoy "$LAB/bin/bun" "$script" "$LAB/bin/pi"
+    wait_for_state "$SESSION:pi-decoy" ambiguous 5 \
+      || fail 'a later Pi argument must not attribute an unrelated Bun process'
+    "$REAL_TMUX" -L "$SOCKET" kill-window -t "$SESSION:pi-decoy"
+  done
+  # Linux preserves spaces through /proc. A flattened prefix must not name Pi.
+  if [ -d /proc ]; then
+    new_window pi-space-decoy "$LAB/bin/bun" "$LAB/bin/pi helper.js"
+    wait_for_state "$SESSION:pi-space-decoy" ambiguous 5 \
+      || fail 'a truncated script path must not falsely identify Pi'
+    new_window pi-space "$LAB/bin/bun" "$LAB/space dir/pi"
+    wait_for_state "$SESSION:pi-space" alive 5 \
+      || fail 'Pi script paths with spaces must retain their argv boundary'
+  fi
+  # Exercise the real composer consumer with identical terminal geometry.
+  # Only the foreground interpreter's script identity changes between panes.
+  # shellcheck source=bin/fm-tmux-lib.sh
+  . "$ROOT/bin/fm-tmux-lib.sh"
+  for variant in pi other.js; do
+    new_window "composer-$variant" bash -c "printf '\\033[2J\\033[H────────────\\n\\n────────────\\n\\033[2;1H'; exec '$LAB/bin/bun' '$LAB/bin/$variant'"
+    wait_for_state "$SESSION:composer-$variant" "$([ "$variant" = pi ] && echo alive || echo ambiguous)" 5 \
+      || fail 'composer fixture did not establish its process identity'
+    expected=unknown
+    [ "$variant" != pi ] || expected=empty
+    [ "$(fm_tmux_composer_state "$SESSION:composer-$variant")" = "$expected" ] \
+      || fail "interpreter $variant composer must be $expected"
+  done
+  pass 'tmux liveness: interpreted Pi is attributed without claiming unrelated Bun processes'
+fi
+
 # --- a harness-named foreground process -------------------------------------
 # Invoking the symlink by its harness name proves the ordinary positive path
 # with a real process. macOS exposes different names for the symlink through

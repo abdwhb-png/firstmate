@@ -74,6 +74,24 @@ fm_agent_process_classify_name() {  # <path> [argv0] -> agent|shell|other
   esac
 }
 
+# Pi's interpreter launch is identified by its script, never a later prompt or
+# a directory merely named pi. Prefer kernel argv boundaries when available;
+# flattened ps output is only a fallback on platforms without /proc.
+fm_agent_process_is_interpreted_pi() {  # <args> [pid]
+  local args=$1 pid=${2:-} interpreter script rest
+  if [ -n "$pid" ] && [ -r "/proc/$pid/cmdline" ]; then
+    {
+      IFS= read -r -d '' interpreter || return 1
+      IFS= read -r -d '' script || return 1
+    } < "/proc/$pid/cmdline"
+  else
+    read -r interpreter script rest <<< "$args"
+  fi
+  case "${interpreter##*/}" in bun|node|nodejs) ;; *) return 1 ;; esac
+  case "$script" in ''|-*) return 1 ;; esac
+  case "${script##*/}" in pi|pi-signed) return 0 ;; *) return 1 ;; esac
+}
+
 # fm_agent_process_classify: one process, from every identity surface a
 # backend can hand over, as agent|shell|other. Any single surface naming a
 # verified harness carries `agent`, because a false negative is the one outcome
@@ -84,10 +102,8 @@ fm_agent_process_classify_name() {  # <path> [argv0] -> agent|shell|other
 #            on Linux the exec name, on macOS argv[0] truncated to 16 bytes.
 #   <argv0>  argv[0] as the process reports it - a bare name or an install
 #            path, whichever the launcher used (empty when unknown).
-#   <args>   the flattened command line, read only for the node-bundle
-#            harnesses whose identity sits in argv[1] (bin/fm-gemini-lib.sh).
-#   [pid]    when given, lets the Gemini rule read argv boundaries from the
-#            live process instead of the flattened line.
+#   <args>   the flattened command line for interpreted harnesses.
+#   [pid]    when given, preserves the live process's argv boundaries.
 fm_agent_process_classify() {  # <name> <argv0> <args> [pid] -> agent|shell|other
   local name=${1:-} argv0=${2:-} args=${3:-} pid=${4:-} by_name by_argv0
   by_name=$(fm_agent_process_classify_name "$name" "$argv0")
@@ -99,6 +115,10 @@ fm_agent_process_classify() {  # <name> <argv0> <args> [pid] -> agent|shell|othe
     [ "$by_argv0" != agent ] || { printf 'agent'; return 0; }
   else
     by_argv0=$by_name
+  fi
+  if fm_agent_process_is_interpreted_pi "$args" "$pid"; then
+    printf 'agent'
+    return 0
   fi
   if [ -n "$pid" ] && fm_gemini_pid_is_gemini "$pid"; then
     printf 'agent'

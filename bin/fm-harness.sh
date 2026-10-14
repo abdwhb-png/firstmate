@@ -72,10 +72,8 @@ FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 
-# shellcheck source=bin/fm-cursor-lib.sh
-. "$SCRIPT_DIR/fm-cursor-lib.sh"
-# shellcheck source=bin/fm-gemini-lib.sh
-. "$SCRIPT_DIR/fm-gemini-lib.sh"
+# shellcheck source=bin/fm-agent-process-lib.sh
+. "$SCRIPT_DIR/fm-agent-process-lib.sh"
 
 # Print the harness named by a verified environment marker, or nothing when no
 # marker is present. Markers only report what the environment CLAIMS; detect_own
@@ -171,7 +169,7 @@ ancestry_names_omp() {
 
 # Print "<strength> <harness>" when one process identifies a harness, or nothing.
 # Strength records how the match was made:
-#   comm - the ancestor's own executable name identifies the harness. This is a
+#   comm - the executable name or exact interpreter entrypoint identifies it. This is a
 #          structural fact about the running program, so it outranks a marker.
 #   args - a bare interpreter matched only because a harness name appears in the
 #          script path it was handed. This is the weakest inference in this file
@@ -187,6 +185,11 @@ harness_process_verdict() {  # <pid>
   fi
   if fm_gemini_path_is_gemini "$comm"; then
     echo "comm gemini"
+    return
+  fi
+  args=$(ps -o args= -p "$pid" 2>/dev/null) || args=
+  if fm_agent_process_is_interpreted_pi "$args" "$pid"; then
+    echo "comm pi"
     return
   fi
   case "$(basename -- "$comm")" in

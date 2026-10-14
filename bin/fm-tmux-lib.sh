@@ -47,8 +47,8 @@ _FM_TMUX_LIB_DIR=${BASH_SOURCE[0]%/*}
 [ "$_FM_TMUX_LIB_DIR" != "${BASH_SOURCE[0]}" ] || _FM_TMUX_LIB_DIR=.
 # shellcheck source=bin/fm-composer-lib.sh
 . "${_FM_TMUX_LIB_DIR:-/}/fm-composer-lib.sh"
-# shellcheck source=bin/fm-cursor-lib.sh
-. "${_FM_TMUX_LIB_DIR:-/}/fm-cursor-lib.sh"
+# shellcheck source=bin/fm-agent-process-lib.sh
+. "${_FM_TMUX_LIB_DIR:-/}/fm-agent-process-lib.sh"
 unset _FM_TMUX_LIB_DIR
 
 
@@ -94,7 +94,8 @@ fm_tmux_composer_caps() {
 # `agent get`. It answers only for pi, from two live signals:
 #   - identity: the pane tty's FOREGROUND process group (pgid = tpgid, the
 #     same scoping as fm_backend_tmux_foreground_comms) contains a pi-family
-#     process (pi, pi-signed, pi-launcher - docs/verification/
+#     process, including an interpreter entrypoint recognized by the shared
+#     process owner (pi, pi-signed, pi-launcher - docs/verification/
 #     runtime-backends.md "Agent liveness name sources"), falling back to
 #     tmux's own foreground-derived #{pane_current_command}. A pane whose
 #     agent died to a shell has no pi foreground process and gets NO identity,
@@ -105,16 +106,20 @@ fm_tmux_composer_caps() {
 # Prints "pi<TAB>idle" or "pi<TAB>working"; exits 1 when the pane is not a
 # live pi.
 fm_tmux_composer_identity() {  # <target>
-  local target=$1 tty pgid tpgid comm found=0 status
+  local target=$1 tty pid pgid tpgid comm args found=0 status
   tty=$(tmux display-message -p -t "$target" '#{pane_tty}' 2>/dev/null) || tty=
   case "$tty" in
     /dev/*)
-      while read -r _ pgid tpgid comm; do
+      while read -r pid pgid tpgid comm; do
         [ -n "$comm" ] || continue
         [ "$pgid" = "$tpgid" ] || continue
         case "${comm##*/}" in
           pi|pi-signed|pi-launcher|Pi) found=1 ;;
         esac
+        if [ "$found" -ne 1 ]; then
+          args=$(LC_ALL=C ps -p "$pid" -o args= 2>/dev/null) || args=
+          fm_agent_process_is_interpreted_pi "$args" "$pid" && found=1
+        fi
       done <<EOF
 $(LC_ALL=C ps -t "${tty#/dev/}" -o pid=,pgid=,tpgid=,comm= 2>/dev/null)
 EOF

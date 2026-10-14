@@ -133,6 +133,8 @@ Pi and pi-signed 0.82.0 were reverified on 2026-07-27 through real isolated `fm-
 
 ### Agent liveness name sources
 
+On 2026-10-14, the token-free live guard passed on Linux/WSL with Codex CLI 0.162.1 and Pi 1.1.0. Codex reported `codex`; Pi reported `bun` and was attributed through its exact script entrypoint. Both classified `alive` and produced `comm`-strength ancestry for their own harness. Claude, OpenCode, Pi-signed, Grok, Kimi, Cursor and Muse were absent and were not qualified by this run. Renew this evidence with `bin/fm-test-run.sh tests/fm-harness-liveness-drift-live-e2e.test.sh`. The portable `tests/fm-tmux-agent-liveness.test.sh` also checks unrelated Bun commands and script paths containing spaces. This evidence covers process attribution, not completion of an MDD mission.
+
 The earlier record that every harness is observed under its own `#{pane_current_command}` no longer holds and has been replaced by the per-harness evidence below.
 In this macOS run that reading reflected a rewritable process title rather than stable executable identity, so it is now one of two independent name sources rather than the sole basis of a verdict.
 
