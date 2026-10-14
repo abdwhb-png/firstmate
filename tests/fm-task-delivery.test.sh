@@ -1235,9 +1235,10 @@ test_forge_gerrit_changes_what_no_mistakes_means() {
   # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
   assert_grep 'Never run `gerrit-axi submit`, never vote or review a change by any path' "$brief" \
     "the gerrit worker was not kept from submitting or voting"
-  # shellcheck disable=SC2016 # Backticks are literal generated Markdown.
-  assert_grep 'Run `no-mistakes doctor`' "$brief" \
-    "the gerrit worker lost the pipeline initialization step no-mistakes still needs"
+  assert_grep 'initialization requires explicit applicable authorization' "$brief" \
+    "the gerrit worker must retain the explicit initialization authority boundary"
+  assert_no_grep 'if it reports the repo is not initialized here, run' "$brief" \
+    "selecting the gerrit delivery mode must not authorize pipeline initialization"
 
   # The forge changes the contract's head and tail only: how the pipeline is
   # driven, what --intent may carry, and the two firstmate-specific rules are the

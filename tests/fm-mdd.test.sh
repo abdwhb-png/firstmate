@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Public preparation boundary and qualification against the real external bundle.
 set -eu
+# shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 TMP_ROOT=$(fm_test_tmproot fm-mdd)
 mkdir -p "$TMP_ROOT"
