@@ -10,6 +10,7 @@ Start with the directory layout, then use the setting reference for the behavior
 | Firstmate's code, private files, or project location | [FM_HOME](#fm_home) and [operational home layout](#operational-home-layout-and-state) |
 | Task windows and worker tools | [Runtime backend](#runtime-backend-configbackend--fm_backend) and [harness support](#harness-support) |
 | Worker permissions, accounts, or environment | [Claude permission mode](#claude-permission-mode-configclaude-permission-mode), [worker account pin](#worker-account-pin-configclaude-account-configpi-account), [worker tool exclusions](#worker-tool-exclusions-configcrew-exclude-tools), and [worker launch environment](#worker-launch-environment-configlaunch-env-allowlist) |
+| Files kept out of project Git status and untracked review content | [Git exclusions](#git-exclusions-configgit-excludes) |
 | Backlog, preferences, and memory | [Backlog backend](#backlog-backend-taskstoml--configbacklog-backend), [captain preferences](#captain-preferences-datacaptainmd--datacaptain-sharedmd), [external memory tiers](#external-memory-tiers-memory-layering-section), and [startup memory budget](#startup-memory-budget-configstartup-memory-budget) |
 | Supervision and presentation | [Pi supervision branch](#pi-supervision-branch), [supervision host](#supervision-host-configsupervision-host), and [Calm preference](#calm-preference-configcalm) |
 | Persistent secondmates | [Secondmate routes](#secondmate-routes-datasecondmatesmd) |
@@ -1038,6 +1039,33 @@ An absent or blank file changes nothing, while a present path that is not a read
 The text is static and never executed or expanded; secondmate charters never take it, and the file is local to each home rather than part of secondmate inherited configuration.
 
 `bin/fm-brief.sh`'s header owns the placement rule and its safety argument.
+
+## Git exclusions (config/git-excludes)
+
+`$FM_HOME/config/git-excludes` is a local, gitignored text file using ordinary `.gitignore` syntax. It applies to every worker harness launched by that home, including relaunches. It can contain personal paths as well as agent runtime files. Comments, spaces, glob patterns and ordered `!` exceptions retain Git's normal meaning. Patterns are relative to each project repository, not to the Firstmate home.
+
+When the file is absent, the fork uses these portable defaults. To customize them, create `config/git-excludes` with this content and edit the list:
+
+```gitignore
+**/.pi-lens-probe-home/cascade.log
+**/.pi-lens-probe-home/extension.log
+**/.pi-lens-probe-home/latency.log
+**/.pi-lens-probe-home/sessionstart.log
+**/.pi-lens-probe-home/word-index.log
+**/.pi/artifacts/session-cron.lock
+
+# Add personal patterns below, for example:
+# /private-notes/
+# /local-only.txt
+```
+
+A present file replaces the defaults entirely. An empty file disables these configured exclusions. Removing the file restores the defaults. A new machine therefore has the runtime defaults without user Git setup; copy this private file with the rest of the Firstmate home to retain personal choices. Existing local and remote secondmate configuration propagation carries the file, including its empty or absent state.
+
+Before launching an agent, `fm-spawn` synchronizes one marked `Firstmate config/git-excludes` block in the repository-local `info/exclude`, resolved through Git. Changes and removals replace only that block, preserve other local exclusions, and do not write a project `.gitignore` or user Git configuration. Repeating the same setting does not rewrite the file. Existing Firstmate hook exclusions use the same locked writer. An unreadable setting or malformed managed block refuses launch and preserves the existing exclusion file.
+
+Linked worktrees share this repository-local file, so the most recently applied home setting applies to all worktrees of that local repository. Different local clones remain independent. Nothing changes existing repositories until a worker launches there; editing the setting does not rewrite the exclusions of running tasks.
+
+Git exclusions do not untrack files. Tracked files remain in Firstmate's review fingerprint, as do explicitly referenced MDD proofs even when Git ignores them. A project's own `.gitignore` can override these lower-priority local exclusions. Configure the reviewed file set before a new review; changing it does not make a previously refused report valid. Firstmate does not discover and automatically ignore unknown files merely because they changed during review.
 
 ## Worker launch environment (config/launch-env-allowlist)
 

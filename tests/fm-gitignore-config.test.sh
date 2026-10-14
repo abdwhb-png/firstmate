@@ -8,8 +8,8 @@
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# shellcheck source=tests/git-config-helpers.sh
-. "$ROOT/tests/git-config-helpers.sh"
+# shellcheck source=tests/fixtures.sh
+. "$ROOT/tests/fixtures.sh"
 
 fail() {
   printf 'not ok - %s\n' "$1" >&2
@@ -89,3 +89,139 @@ test_unrelated_path_stays_visible
 test_scratchpad_prefix_is_ignored
 test_scratchpad_prefix_ignores_no_tracked_path
 test_scratchpad2_does_not_dirty_porcelain
+
+test_spawn_applies_configured_git_excludes() {
+  local tmp home project wt fakebin id out exclude next
+  tmp=$(fm_test_tmproot fm-git-excludes)
+  home="$tmp/home"; project="$tmp/project"; wt="$tmp/worktree"
+  id="git-excludes-$$"
+  fm_test_spawn_home "$home" codex
+  fm_test_spawn_brief "$home" "$id"
+  fm_git_worktree "$project" "$wt" test-excludes
+  exclude=$(git -C "$wt" rev-parse --git-path info/exclude)
+  printf '\n# Existing project-local rule\n/manual.tmp\n' >> "$exclude"
+  fakebin=$(fm_test_make_spawn_fakebin "$tmp/tools")
+  printf '# Personal paths\n/private-notes/\n/local file.txt\n/scratch/*\n!/scratch/keep.md\n' > "$home/config/git-excludes"
+  out=$(fm_test_run_spawn "$home" "$wt" "$fakebin" "$id" "$project" --mode local-only --yolo off) \
+    || fail "configured launch failed: $out"
+  git -C "$wt" check-ignore -q private-notes/note.md \
+    || fail 'launch did not apply config/git-excludes to its worktree'
+  git -C "$wt" check-ignore -q 'local file.txt' \
+    || fail 'launch did not preserve spaces in Git patterns'
+  mkdir -p "$wt/scratch"
+  touch "$wt/scratch/discard.md" "$wt/scratch/keep.md" "$wt/source.mjs"
+  git -C "$wt" ls-files --others --exclude-standard > "$tmp/visible"
+  grep -qxF 'scratch/keep.md' "$tmp/visible" || fail 'Git negation stopped working'
+  grep -qxF 'source.mjs' "$tmp/visible" || fail 'unrelated code was hidden'
+  if grep -q '^scratch/discard.md$' "$tmp/visible"; then fail 'configured glob was not applied'; fi
+  git -C "$wt" add -f scratch/discard.md
+  git -C "$wt" ls-files --cached --others --exclude-standard > "$tmp/visible"
+  grep -qxF 'scratch/discard.md' "$tmp/visible" || fail 'tracked files must remain in the reviewed content'
+  [ ! -e "$wt/.gitignore" ] || fail 'launch wrote a project .gitignore'
+  pass 'launch applies private Git exclusions without changing project files'
+
+  printf '/new-notes/\n' > "$home/config/git-excludes"
+  for next in changed empty absent; do
+    case "$next" in
+      empty) : > "$home/config/git-excludes" ;;
+      absent) rm "$home/config/git-excludes" ;;
+    esac
+    wt="$tmp/$next-worktree"
+    id="git-excludes-$next-$$"
+    git -C "$project" worktree add -q -b "$next" "$wt"
+    fm_test_spawn_brief "$home" "$id"
+    out=$(fm_test_run_spawn "$home" "$wt" "$fakebin" "$id" "$project" --mode local-only --yolo off) \
+      || fail "$next exclusion launch failed: $out"
+    if git -C "$wt" check-ignore -q private-notes/note.md; then
+      fail 'removing a configured rule left its old exclusion in the repository'
+    fi
+    git -C "$wt" check-ignore -q manual.tmp || fail 'synchronization removed a user-owned exclusion'
+    if [ "$next" = changed ]; then
+      git -C "$wt" check-ignore -q new-notes/note.md || fail 'updated exclusions were not installed'
+    else
+      if git -C "$wt" check-ignore -q new-notes/note.md; then fail 'clearing configuration retained an old rule'; fi
+    fi
+    if [ "$next" = absent ]; then
+      git -C "$wt" check-ignore -q .pi-lens-probe-home/extension.log || fail 'absent configuration did not use portable defaults'
+      git -C "$wt" check-ignore -q .pi/artifacts/session-cron.lock || fail 'default cron lock exclusion missing'
+    elif git -C "$wt" check-ignore -q .pi-lens-probe-home/extension.log; then
+      fail 'explicit configuration did not replace the defaults'
+    fi
+  done
+  pass 'changed, empty and absent configuration converge while preserving manual exclusions'
+}
+
+test_git_excludes_inherit_to_secondmate() {
+  local tmp source dest
+  tmp=$(fm_test_tmproot fm-git-excludes-inherit)
+  source="$tmp/primary/config"; dest="$tmp/secondmate/config"
+  mkdir -p "$source" "$dest"
+  printf '/private-notes/\n' > "$source/git-excludes"
+  (
+    # shellcheck source=bin/fm-config-inherit-lib.sh
+    . "$ROOT/bin/fm-config-inherit-lib.sh"
+    propagate_inheritable_config "$source" "$dest" || exit 1
+    cmp -s "$source/git-excludes" "$dest/git-excludes" || exit 1
+    : > "$source/git-excludes"
+    propagate_inheritable_config "$source" "$dest" || exit 1
+    [ -f "$dest/git-excludes" ] && [ ! -s "$dest/git-excludes" ] || exit 1
+    rm "$source/git-excludes"
+    propagate_inheritable_config "$source" "$dest" || exit 1
+    [ ! -e "$dest/git-excludes" ] || exit 1
+  ) || fail 'secondmate did not inherit configured, empty and absent Git exclusions'
+  pass 'secondmate inherits the primary Git exclusion setting through existing propagation'
+}
+
+test_git_excludes_defaults_and_failures() {
+  local tmp home project wt fakebin id out exclude bad before
+  tmp=$(fm_test_tmproot fm-git-excludes-defaults)
+  home="$tmp/home"; project="$tmp/project"; wt="$tmp/worktree"
+  id="git-excludes-defaults-$$"
+  fm_test_spawn_home "$home" pi
+  fm_test_spawn_brief "$home" "$id"
+  fm_git_worktree "$project" "$wt" defaults
+  fakebin=$(fm_test_make_spawn_fakebin "$tmp/tools" pi)
+  exclude=$(git -C "$wt" rev-parse --git-path info/exclude)
+  cp "$exclude" "$tmp/original-exclude"
+  for bad in directory dangling marker nul; do
+    case "$bad" in
+      directory) mkdir "$home/config/git-excludes" ;;
+      dangling) ln -s "$tmp/missing" "$home/config/git-excludes" ;;
+      marker) printf '# BEGIN Firstmate config/git-excludes\n' > "$home/config/git-excludes" ;;
+      nul) printf 'unsafe\0pattern\n' > "$home/config/git-excludes" ;;
+    esac
+    if out=$(fm_test_run_spawn "$home" "$wt" "$fakebin" "$id" "$project" --mode local-only --yolo off); then
+      fail "$bad configuration was silently accepted"
+    fi
+    assert_contains "$out" 'git-excludes' 'refusal did not identify its configuration'
+    assert_absent "$home/state/$id.meta" 'invalid configuration published a task'
+    cmp -s "$exclude" "$tmp/original-exclude" || fail 'invalid configuration changed Git exclusions'
+    if [ "$bad" = directory ]; then rmdir "$home/config/git-excludes"; else rm "$home/config/git-excludes"; fi
+  done
+  out=$(fm_test_run_spawn "$home" "$wt" "$fakebin" "$id" "$project" --mode local-only --yolo off) \
+    || fail "Pi default launch failed: $out"
+  git -C "$wt" check-ignore -q .pi-lens-probe-home/extension.log || fail 'fresh project requires a user Git configuration'
+  git -C "$wt" check-ignore -q subdir/.pi/artifacts/session-cron.lock || fail 'nested runtime path was not ignored'
+  if git -C "$wt" check-ignore -q .pi/artifacts/session-cron.json; then fail 'default excluded functional cron configuration'; fi
+  if git -C "$wt" check-ignore -q diagnostic.log; then fail 'default excluded unrelated logs'; fi
+  before=$(cat "$exclude")
+  id="git-excludes-repeat-$$"
+  fm_test_spawn_brief "$home" "$id"
+  out=$(fm_test_run_spawn "$home" "$wt" "$fakebin" "$id" "$project" --mode local-only --yolo off) \
+    || fail "repeated launch failed: $out"
+  [ "$(cat "$exclude")" = "$before" ] || fail 'same setting changed the exclusions on repeated launch'
+  printf '# BEGIN Firstmate config/git-excludes\n' >> "$exclude"
+  cp "$exclude" "$tmp/broken-exclude"
+  id="git-excludes-corrupt-$$"
+  fm_test_spawn_brief "$home" "$id"
+  if out=$(fm_test_run_spawn "$home" "$wt" "$fakebin" "$id" "$project" --mode local-only --yolo off); then
+    fail 'malformed managed block was silently repaired'
+  fi
+  assert_contains "$out" 'Firstmate exclude block' 'corrupt block error lacked context'
+  cmp -s "$exclude" "$tmp/broken-exclude" || fail 'failed synchronization discarded exclusion evidence'
+  pass 'portable defaults, repeat launches and invalid configuration preserve Git and task boundaries'
+}
+
+test_git_excludes_inherit_to_secondmate
+test_spawn_applies_configured_git_excludes
+test_git_excludes_defaults_and_failures

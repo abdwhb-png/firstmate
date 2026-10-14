@@ -333,6 +333,10 @@
 #   prevents equal task ids in different Firstmate homes from sharing a file.
 #   Spawn refuses an unsafe pre-existing task temp root or launch namespace, and
 #   task teardown removes only the current home's launch namespace.
+# Git exclusions (config/git-excludes): resolved once before provisioning and
+# synchronized into the repository-local info/exclude before worker launch.
+# docs/configuration.md owns the setting, defaults, scope and inheritance.
+#
 # Launch environment (config/launch-env-allowlist):
 #   Absent means unchanged ambient inheritance. A present readable regular file
 #   opts every launch (ship, scout, secondmate, raw command, and relaunch) into
@@ -626,6 +630,34 @@ if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
     echo "error: config/launch-env-allowlist must contain one environment name per line, blank lines, or # comments" >&2
     exit 1
   fi
+fi
+# A present file replaces the portable defaults, including when it is empty.
+GIT_EXCLUDES=$(cat <<'EOF'
+**/.pi-lens-probe-home/cascade.log
+**/.pi-lens-probe-home/extension.log
+**/.pi-lens-probe-home/latency.log
+**/.pi-lens-probe-home/sessionstart.log
+**/.pi-lens-probe-home/word-index.log
+**/.pi/artifacts/session-cron.lock
+EOF
+)
+if ! GIT_EXCLUDES_PRESENT=$(fm_config_source_present "$CONFIG/git-excludes"); then
+  exit 1
+fi
+if [ "$GIT_EXCLUDES_PRESENT" = 1 ]; then
+  if [ ! -f "$CONFIG/git-excludes" ] || [ ! -r "$CONFIG/git-excludes" ]; then
+    echo "error: config/git-excludes must be a readable regular file" >&2
+    exit 1
+  fi
+  GIT_EXCLUDES=$(perl -0777 -e '
+    use strict; use warnings;
+    open my $in, "<", $ARGV[0] or die "error: read config/git-excludes: $!\n";
+    my $text = <$in> // "";
+    close $in or die "error: close config/git-excludes: $!\n";
+    die "error: config/git-excludes contains a NUL or reserved Firstmate marker\n"
+      if $text =~ /\0|^# (?:BEGIN|END) Firstmate config\/git-excludes\r?$/m;
+    print $text;
+  ' "$CONFIG/git-excludes") || exit 1
 fi
 # config/claude-permission-mode (header above): resolved once per spawn or
 # relaunch, before any mutation, so a malformed file refuses instead of
@@ -4806,20 +4838,76 @@ mkdir -p "$TASK_TMP/gotmp"
 mkdir -p "$STATE"
 STATE_REAL=$(cd "$STATE" && pwd -P)
 TURNEND="$STATE_REAL/$ID.turn-ended"
-exclude_path() {
-  local rel=$1 EXCL
+update_git_excludes() { # <add|config> <literal-path|gitignore-content>
+  local mode=$1 patterns=$2 EXCL lock rc=0
   # git rev-parse --git-path is relative to the repository, not to this
   # process's cwd. A caller sitting in another worktree must not mkdir
   # against its own .git file.
-  EXCL=$(git -C "$WT" rev-parse --git-path info/exclude 2>/dev/null || true)
-  [ -n "$EXCL" ] || return 0
+  EXCL=$(git -C "$WT" rev-parse --git-path info/exclude) || return 1
   case "$EXCL" in
     /*) ;;
     *) EXCL="$WT/$EXCL" ;;
   esac
-  mkdir -p "$(dirname "$EXCL")"
-  grep -qxF "$rel" "$EXCL" 2>/dev/null || echo "$rel" >>"$EXCL"
+  mkdir -p "$(dirname "$EXCL")" || return 1
+  # Linked worktrees share info/exclude. Both configured rules and hook paths
+  # use this lock so concurrent launches cannot overwrite each other's writes.
+  lock="$EXCL.firstmate-lock"
+  fm_lock_acquire_wait_bounded "$lock" 10 || return 1
+  printf '%s' "$patterns" | perl -e '
+    use strict; use warnings;
+    use File::Basename qw(dirname);
+    use File::Temp qw(tempfile);
+    my ($file, $mode) = @ARGV;
+    local $/;
+    my $patterns = <STDIN> // "";
+    die "error: Git exclude path must be a regular file: $file\n" if -l $file || (-e $file && !-f $file);
+    my $old = "";
+    if (-e $file) {
+      open my $in, "<", $file or die "error: read $file: $!\n";
+      $old = <$in> // "";
+      close $in or die "error: close $file: $!\n";
+    }
+    my $new = $old;
+    if ($mode eq "config") {
+      my $begin = "# BEGIN Firstmate config/git-excludes";
+      my $end = "# END Firstmate config/git-excludes";
+      my $block = length($patterns) ? "$begin\n$patterns\n$end\n" : "";
+      my ($inside, $seen) = (0, 0);
+      $new = "";
+      for my $line (split /(?<=\n)/, $old) {
+        (my $marker = $line) =~ s/\r?\n$//;
+        if ($marker eq $begin) {
+          die "error: duplicate or nested Firstmate exclude block in $file\n" if $inside || $seen++;
+          $inside = 1;
+          $new .= $block;
+        } elsif ($marker eq $end) {
+          die "error: unmatched Firstmate exclude marker in $file\n" unless $inside;
+          $inside = 0;
+        } elsif (!$inside) {
+          $new .= $line;
+        }
+      }
+      die "error: incomplete Firstmate exclude block in $file\n" if $inside;
+      if (!$seen && length($block)) {
+        $new .= "\n" if length($new) && $new !~ /\n$/;
+        $new .= $block;
+      }
+    } elsif ($mode eq "add") {
+      exit 0 if grep { $_ eq $patterns } split /\n/, $old;
+      $new .= "\n" if length($new) && $new !~ /\n$/;
+      $new .= "$patterns\n";
+    } else { die "error: unsupported Git exclusion update\n"; }
+    exit 0 if $new eq $old;
+    my ($out, $tmp) = tempfile(".firstmate-exclude-XXXXXX", DIR => dirname($file), UNLINK => 1);
+    chmod((stat($file))[2] & 0777, $tmp) or die "error: preserve $file mode: $!\n" if -e $file;
+    print {$out} $new or die "error: write $tmp: $!\n";
+    close $out or die "error: close $tmp: $!\n";
+    rename $tmp, $file or die "error: publish $file: $!\n";
+  ' "$EXCL" "$mode" || rc=$?
+  fm_lock_release "$lock"
+  return "$rc"
 }
+update_git_excludes config "$GIT_EXCLUDES" || exit 1
 if [ "$RELAUNCH" -eq 1 ]; then
   # Retire the previous incarnation's per-task harness wiring before arming the
   # new one. Without this, a harness switch would leave the old adapter's hook
@@ -4948,7 +5036,7 @@ BUSY_GEN=
         printf 'id=%s\n' "$ID"
         printf 'gen=%s\n' "$BUSY_GEN"
       } >"$WT/.fm-busy-stop"
-      exclude_path '.fm-busy-stop'
+      update_git_excludes add '.fm-busy-stop' || exit 1
     else
       stop_turnend=
       if [ "$busy_notify_turnend" = true ]; then
@@ -4967,7 +5055,7 @@ BUSY_GEN=
     else
       mkdir -p "$WT/.claude"
       printf '{%s}\n' "$hooks_json" >"$WT/.claude/settings.local.json"
-      exclude_path '.claude/settings.local.json'
+      update_git_excludes add '.claude/settings.local.json' || exit 1
     fi
     ;;
   devin)
@@ -5063,7 +5151,7 @@ export const FmBusyState = async () => {
   };
 };
 EOF
-    exclude_path '.opencode/plugins/fm-busy-state.js'
+    update_git_excludes add '.opencode/plugins/fm-busy-state.js' || exit 1
     ;;
   pi | pi-signed)
     # Written OUTSIDE the worktree: pi's project-trust gate fires on any extension
@@ -5227,7 +5315,7 @@ EOF
     hook_command=$(json_escape "bash $(shell_quote "$GROK_HOOKS_DIR/fm-turn-end.sh")")
     printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"%s"}]}]}}\n' "$hook_command" >"$GROK_HOOKS_DIR/fm-turn-end.json"
     printf 'token=%s\n' "${auth_file##*/}" >"$WT/.fm-grok-turnend"
-    exclude_path '.fm-grok-turnend'
+    update_git_excludes add '.fm-grok-turnend' || exit 1
     fi
     ;;
   muse*)
@@ -5297,7 +5385,7 @@ EOF
     printf '%s\n' "$TURNEND" >"$auth_file"
     printf '%s\n' "${auth_file##*/}" >"$STATE/$ID.kimi-turnend-token"
     printf 'token=%s\n' "${auth_file##*/}" >"$WT/.fm-kimi-turnend"
-    exclude_path '.fm-kimi-turnend'
+    update_git_excludes add '.fm-kimi-turnend' || exit 1
     fi
     ;;
   esac
