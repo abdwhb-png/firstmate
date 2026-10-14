@@ -1,6 +1,6 @@
 # Fork FirstMate et raccordement MDD
 
-Cette conception correspond au plan autorisé le 14 octobre 2026. La branche candidate est `2911a3bb6dd1+fork-1`, fondée sur le commit officiel complet `2911a3bb6dd1b41061fb4dc87738791bf78008f4`. Le fork natif est [abdwhb-png/firstmate](https://github.com/abdwhb-png/firstmate). Les vérifications courantes et leurs limites sont consignées dans [la qualification](../verification/fork-mdd.md). La publication de la branche et la bascule de l'installation restent des opérations distinctes, soumises à leur autorisation.
+Cette conception correspond au plan autorisé le 14 octobre 2026. La première version est `2911a3bb6dd1+fork-1`, fondée sur le commit officiel complet `2911a3bb6dd1b41061fb4dc87738791bf78008f4`. Le fork natif est [abdwhb-png/firstmate](https://github.com/abdwhb-png/firstmate). Les vérifications courantes et leurs limites sont consignées dans [la qualification](../verification/fork-mdd.md). La candidate locale `2911a3bb6dd1+fork-2` corrige les défauts de reconnaissance Pi et de supervision après arrêt révélés par les pilotes. Sa publication et la bascule de l'installation restent des opérations distinctes, soumises à leur autorisation.
 
 ## Décisions retenues
 
@@ -69,4 +69,4 @@ Une divergence non redondante d'un secondmate, y compris lors d'un retour arriè
 
 Une bascule arrête proprement les exécutions concernées et conserve la référence précédente et les données privées. Le retour arrière réinstalle cette référence sans supprimer les worktrees, les preuves ni les bundles. Cette version n'écrit pas le brief traditionnel attendu par les anciennes versions pour une tâche MDD : leur relance ordinaire doit refuser cette tâche, pas la reprendre en perdant ses contraintes. Ne pas fabriquer un brief de compatibilité pour contourner ce refus.
 
-La première préparation/lancement MDD est limitée au backend tmux. Les mécanismes de lancement Codex et Pi sont couverts par des simulations sans agents réels. Les pilotes avec agents nécessitent leur autorisation séparée et restent nécessaires avant d'annoncer ces combinaisons comme qualifiées en usage réel. Les autres backends ne sont pas annoncés comme qualifiés.
+La préparation et le lancement MDD restent limités au backend tmux. Les pilotes réels autorisés couvrent le cycle complet Codex et le lancement, le retour, la revue neuve et l’arrêt Pi. L’acceptation finale Pi reste bloquée par des journaux d’extensions modifiés dans le contenu examiné. La qualification détaille cette limite et les versions testées. Les autres backends ne sont pas annoncés comme qualifiés.
