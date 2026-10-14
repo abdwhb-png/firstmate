@@ -5565,6 +5565,26 @@ for cancellation_test in test_captured_cancelled_review_has_no_verdict \
 done
 [ "$cancellation_failures" -eq 0 ] || fail "$cancellation_failures cancellation test groups failed"
 
+test_stopped_agent_retains_attributed_pipeline_supervision() {
+  reset_fakes
+  local d out
+  d=$(new_case stopped-pipeline)
+  make_repo_on_branch "$d/wt" fm/stopped
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/stopped.meta" "window=fm:fm-stopped" "worktree=$d/wt" "kind=ship" "spawn_gen=s1" "stopped_gen=s1"
+  FM_FAKE_AXI_STATUS="$(run_running fm/stopped)"
+  export FM_CREW_STATE_ACTIVITY_ONLY=1
+  out=$(run_crew_state "$d" stopped)
+  unset FM_CREW_STATE_ACTIVITY_ONLY
+  assert_contains "$out" 'state: active' 'stopping an agent must not stop its pipeline'
+  pass "activity-only read preserves attributed active pipeline"
+}
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  "$FM_TEST_ONLY"
+  exit 0
+fi
+test_stopped_agent_retains_attributed_pipeline_supervision
+
 test_active_run_is_authoritative
 test_stale_needs_decision_superseded
 test_stale_blocked_superseded

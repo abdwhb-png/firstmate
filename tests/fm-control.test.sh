@@ -130,6 +130,7 @@ case "${1:-}" in
       if [ -z "${FM_FAKE_NEVER_DIES:-}" ] \
          && { [ "$payload" = /exit ] || [ "$payload" = /quit ]; }; then
         printf 'zsh' > "$D/command"
+        [ ! -f "$D/on-exit" ] || bash "$D/on-exit"
       fi
       case "$payload" in
         *'encode launch-brief'* | *'Firstmate operational input waiting: read'*) cat "$D/becomes" > "$D/command" ;;
@@ -1171,6 +1172,82 @@ $cases
 EOF
   pass "fm-control-lib: only a runtime's own recorded session has a relaunch resume form"
 }
+
+test_confirmed_stop_preserves_evidence_without_supervision() {
+  local dir out rc
+  dir=$(new_case stop-proof)
+  add_task "$dir" t1 codex
+  printf 'spawn_gen=s1
+' >> "$dir/home/state/t1.meta"
+  printf 'paused: human decision
+' > "$dir/home/state/t1.status"
+  printf 'evidence
+' > "$dir/home/data/t1/report.md"
+  alive_as "$dir" codex
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 0 "$rc" "$out"
+  grep -qx 'stopped_gen=s1' "$dir/home/state/t1.meta" || fail "confirmed stop has no durable generation-bound proof"
+  [ -f "$dir/home/data/t1/report.md" ] || fail "exit discarded evidence"
+  cat > "$dir/fakebin/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+printf "error: repo not initialized (run 'no-mistakes init' first)\n"
+SH
+  chmod +x "$dir/fakebin/no-mistakes"
+  . "$ROOT/bin/fm-supervision-lib.sh"
+  PATH="$dir/fakebin:$PATH" fm_supervision_status "$dir/home/state"
+  [ "$FM_SUP_NEEDED" = false ] || fail "confirmed stopped agent still needs supervision"
+  printf 'spawn_gen=s2
+' >> "$dir/home/state/t1.meta"
+  PATH="$dir/fakebin:$PATH" fm_supervision_status "$dir/home/state"
+  [ "$FM_SUP_NEEDED" = true ] || fail "successor inherited old stop proof"
+  pass "confirmed stop retains evidence, retires supervision only for its own generation"
+}
+test_stop_generation_race_preserves_successor() {
+  local dir out rc
+  dir=$(new_case stop-race)
+  add_task "$dir" t1 codex
+  printf 'spawn_gen=old\n' >> "$dir/home/state/t1.meta"
+  alive_as "$dir" codex
+  cat > "$dir/fake/on-exit" <<'SH'
+#!/usr/bin/env bash
+printf 'spawn_gen=new\nbusy_gen=new-busy\n' >> "$FM_HOME/state/t1.meta"
+printf 'new-busy\n' > "$FM_HOME/state/t1.busy-gen"
+SH
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "$out"
+  assert_contains "$out" 'changed generation' 'stop race must require reconciliation'
+  [ "$(cat "$dir/home/state/t1.busy-gen")" = new-busy ] || fail 'old stop retired successor activity'
+  assert_no_grep '^stopped_gen=' "$dir/home/state/t1.meta" 'race published stale proof'
+  pass 'old stop cannot publish proof or retire the new generation'
+}
+
+test_stop_publication_failure_retains_record() {
+  local dir out rc
+  dir=$(new_case stop-publish)
+  add_task "$dir" t1 codex
+  printf 'spawn_gen=old\n' >> "$dir/home/state/t1.meta"
+  alive_as "$dir" codex
+  cat > "$dir/fakebin/mv" <<'SH'
+#!/usr/bin/env bash
+case "$*" in *'.t1.stop.'*) exit 1 ;; esac
+exec /bin/mv "$@"
+SH
+  chmod +x "$dir/fakebin/mv"
+  out=$(run_control "$dir" t1 exit); rc=$?
+  expect_code 1 "$rc" "$out"
+  [ -f "$dir/home/state/t1.meta" ] || fail 'failed publication removed record'
+  assert_no_grep '^stopped_gen=' "$dir/home/state/t1.meta" 'failed publication claimed a stop'
+  assert_contains "$out" 'receipt was not published' 'failure was hidden'
+  pass 'failed stop publication preserves metadata and reports reconciliation'
+}
+
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  "$FM_TEST_ONLY"
+  exit 0
+fi
+test_confirmed_stop_preserves_evidence_without_supervision
+test_stop_generation_race_preserves_successor
+test_stop_publication_failure_retains_record
 
 test_exit_types_each_harness_verified_command
 test_interrupt_sends_each_harness_verified_key

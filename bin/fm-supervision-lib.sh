@@ -21,9 +21,30 @@ fm_sup_stat_mtime() {
   fi
 }
 
+# Retained task records are not an agent-liveness signal once the control
+# owner has proved this exact generation stopped. Sources and checks are
+# counted independently; the current-state owner still attributes pipelines.
+fm_supervision_agent_stopped() {  # <meta>
+  local gen stopped
+  [ -f "$1" ] || return 1
+  gen=$(sed -n 's/^spawn_gen=//p' "$1" | tail -1)
+  stopped=$(sed -n 's/^stopped_gen=//p' "$1" | tail -1)
+  [ -n "$gen" ] && [ "$gen" = "$stopped" ]
+}
+
+fm_supervision_task_needed() {  # <meta>
+  local meta=$1 dir id result owner
+  fm_supervision_agent_stopped "$meta" || return 0
+  dir=${meta%/*}; id=${meta##*/}; id=${id%.meta}
+  owner="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-crew-state.sh"
+  result=$(FM_STATE_OVERRIDE="$dir" FM_HOME="${dir%/*}" FM_CREW_STATE_META_OVERRIDE="$meta" \
+    FM_CREW_STATE_ACTIVITY_ONLY=1 FM_CREW_STATE_NO_FORGE=1 "$owner" "$id" 2>/dev/null) || return 0
+  [ "$result" != 'state: inactive · source: run-step' ]
+}
+
 # fm_supervision_status <state-dir> [grace-seconds]
 # Populates, for the state dir at $1:
-#   FM_SUP_IN_FLIGHT      count of state/*.meta (in-flight tasks)
+#   FM_SUP_IN_FLIGHT      count of tasks still needing supervision
 #   FM_SUP_SOURCES        count of registered process-to-event sources
 #   FM_SUP_CHECKS         count of registered custom checks: a state/<id>.check.sh
 #                         with the state/<id>.check-trust binding that
@@ -54,6 +75,7 @@ fm_supervision_status() {
 
   for meta in "$state"/*.meta; do
     [ -e "$meta" ] || continue
+    fm_supervision_task_needed "$meta" || continue
     FM_SUP_IN_FLIGHT=$((FM_SUP_IN_FLIGHT + 1))
   done
   FM_SUP_SOURCES=0

@@ -6603,6 +6603,19 @@ test_paused_until_that_passed_is_rechecked_before_the_cadence() {
   pass "a declared wait whose until time has passed is rechecked at once, then held to the cadence"
 }
 
+
+test_confirmed_stop_does_not_alarm_on_retained_terminal() {
+  local dir state
+  dir=$(wedge_threshold_fixture confirmed-stop 'working: earlier work' 2000)
+  state="$dir/state"
+  printf 'spawn_gen=s1\nstopped_gen=s1\nkind=scout\n' >> "$state/wedge.meta"
+  wedge_threshold_round "$state" "$dir/fakebin" "$dir/watch.out" "$dir/pane.txt" test:fm-wedge \
+    'state: unknown · source: pane' absorb || fail "confirmed stopped terminal generated an alarm"
+  [ "$(wedge_stale_wakes "$state" test:fm-wedge)" -eq 0 ] || fail "stopped agent has stale notifications"
+  [ -f "$state/wedge.meta" ] || fail "watcher deleted task evidence"
+  pass "watcher keeps confirmed stopped terminal and evidence without inactive alarms"
+}
+
 # CI's stock macOS Bash lane sets FM_TEST_ONLY to run just the bash-3.2
 # churn-deferral regression. The rest of this file is not a 3.2 snapshot suite.
 if [ -n "${FM_TEST_ONLY:-}" ]; then
@@ -6610,6 +6623,7 @@ if [ -n "${FM_TEST_ONLY:-}" ]; then
   exit 0
 fi
 
+test_confirmed_stop_does_not_alarm_on_retained_terminal
 test_status_span_actionable_classifier
 test_status_span_survives_a_later_routine_append
 test_status_span_respects_decision_closure

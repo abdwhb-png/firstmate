@@ -36,6 +36,9 @@
 #              every uncommitted change. Interrupts first when the task reads
 #              busy, then submits the harness's exit command. Postcondition:
 #              the backend's recovery-grade classifier reports the agent gone.
+#              A confirmed stop publishes stopped_gen=spawn_gen under the task
+#              metadata lock. Failed publication remains an error requiring
+#              reconciliation. Status declarations never create this receipt.
 #              Already-stopped is success (idempotent). An endpoint that reads
 #              `missing` is put through the control plane's per-backend absence
 #              proof (fm_control_endpoint_absence_verdict) before anything is
@@ -360,6 +363,8 @@ LABEL="fm-$ID"
 RECORDED_HARNESS=$(fm_meta_get "$META" harness)
 KIND=$(fm_meta_get "$META" kind)
 WT=$(fm_meta_get "$META" worktree)
+STOP_SPAWN_GEN=$(fm_meta_get "$META" spawn_gen)
+STOP_BUSY_GEN=$(fm_busy_current_gen "$STATE" "$ID" 2>/dev/null || true)
 [ -n "$KIND" ] || KIND=ship
 
 HARNESS=$(fm_control_harness_family "$RECORDED_HARNESS") \
@@ -622,14 +627,46 @@ clear_retired_meta_busy_gen() {  # <gen>
 }
 
 retire_busy_incarnation() {
-  local gen=
+  local gen=$STOP_BUSY_GEN
   if [ -f "$STATE/$ID.busy-gen" ]; then
-    gen=$(fm_busy_current_gen "$STATE" "$ID" 2>/dev/null || true)
     if [ -n "$gen" ] \
       && "$SCRIPT_DIR/fm-busy-event.sh" retire "$STATE" "$ID" --gen "$gen" >/dev/null 2>&1; then
       clear_retired_meta_busy_gen "$gen" || true
     fi
   fi
+}
+
+# A stop receipt belongs to the observed incarnation, never merely to the task.
+# Legacy records without a spawn identity remain conservatively supervised.
+publish_confirmed_stop() {
+  local lock tmp
+  if [ -z "$STOP_SPAWN_GEN" ]; then
+    retire_busy_incarnation
+    return 0
+  fi
+  lock=$(fm_meta_lock_path "$META") || return 1
+  fm_lock_acquire_wait "$lock" || return 1
+  if [ "$(fm_meta_get "$META" spawn_gen)" != "$STOP_SPAWN_GEN" ]; then
+    fm_lock_release "$lock"
+    echo "error: task $ID changed generation during stop; reconcile its current agent" >&2
+    return 1
+  fi
+  if ! declare -F fm_backlog_atomic_transition >/dev/null 2>&1; then
+    # shellcheck source=bin/fm-tasks-axi-lib.sh
+    . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+    # shellcheck source=bin/fm-backlog-transition-lib.sh
+    . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
+  fi
+  tmp=$(mktemp "$STATE/.$ID.stop.XXXXXX") || { fm_lock_release "$lock"; return 1; }
+  if ! { sed '/^stopped_gen=/d' "$META" > "$tmp" && printf 'stopped_gen=%s\n' "$STOP_SPAWN_GEN" >> "$tmp" &&
+    fm_backlog_atomic_transition publish "$tmp" "$META" "confirmed agent stop" "$STATE"; }; then
+    rm -f "$tmp"
+    fm_lock_release "$lock"
+    echo "error: agent stopped but its receipt was not published; reconcile task $ID" >&2
+    return 1
+  fi
+  fm_lock_release "$lock"
+  retire_busy_incarnation
 }
 
 # do_exit: stop the running agent, preserving endpoint and worktree. Prints
@@ -640,6 +677,7 @@ do_exit() {
   state=$(agent_state)
   case "$state" in
     dead)
+      publish_confirmed_stop || return 1
       printf 'already-stopped'
       return 0
       ;;
@@ -658,6 +696,7 @@ do_exit() {
           # verb normally preserves did not survive. The worktree and every
           # uncommitted change are untouched, and `relaunch` re-creates the
           # endpoint from here.
+          publish_confirmed_stop || return 1
           printf 'endpoint-gone'
           return 0
           ;;
@@ -666,6 +705,7 @@ do_exit() {
           # no agent - a herdr pane whose session server was merely stopped is
           # the common case. Nothing is gone, so this is the ordinary
           # already-stopped outcome.
+          publish_confirmed_stop || return 1
           printf 'already-stopped'
           return 0
           ;;
@@ -687,7 +727,7 @@ do_exit() {
       state=$(agent_state)
       case "$state" in
         dead)
-          retire_busy_incarnation
+          publish_confirmed_stop || return 1
           printf 'stopped'
           return 0
           ;;
@@ -753,7 +793,7 @@ do_exit() {
   }
   # The incarnation is over: retire its busy wiring so no stale record or
   # orphaned generation survives the agent that produced it.
-  retire_busy_incarnation
+  publish_confirmed_stop || return 1
   printf 'stopped'
 }
 

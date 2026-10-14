@@ -158,6 +158,9 @@
 #      classified by step 4. Backends with no classifier keep reading a failed
 #      capture as gone. The fallback's own comment owns the per-verdict rules.
 #
+# FM_CREW_STATE_ACTIVITY_ONLY=1 reads attributed pipeline activity only and
+# returns active, inactive, or unknown without reading the deliberately stopped
+# agent or querying a forge. Query failures remain unknown.
 # Read-only and side-effect free. Always exits 0 on a successful read regardless
 # of state; exit 2 only on a usage error (no id).
 set -u
@@ -224,6 +227,9 @@ KIND=$(meta_value kind)
 HARNESS=$(meta_value harness)
 REMOTE_HOST=$(meta_value remote_host)
 [ -n "$KIND" ] || KIND=ship
+if [ "${FM_CREW_STATE_ACTIVITY_ONLY:-0}" = 1 ] && [ "$KIND" != ship ]; then
+  emit inactive run-step
+fi
 
 # A torn-down (or never-created) worktree has no current state to read. A
 # remote secondmate's recorded worktree is a path on ITS host, so the local
@@ -963,9 +969,17 @@ SELECTED_RUN_ID=""
 # Scouts and secondmates never drive a no-mistakes validation of their own
 # worktree, so skip the lookup for them and read state from pane/log directly.
 if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/null 2>&1; then
-  RUN_OUT=$(nm_run axi status)
+  if [ "${FM_CREW_STATE_ACTIVITY_ONLY:-0}" = 1 ]; then
+    RUN_OUT=$(fm_nm_run_checked "$WT" "$NM_TIMEOUT" axi status) || emit unknown run-step "pipeline query failed"
+    [ -n "$RUN_OUT" ] || emit unknown run-step "pipeline query empty"
+  else
+    RUN_OUT=$(nm_run axi status)
+  fi
   if [ "$(strip_quotes "$(printf '%s\n' "$RUN_OUT" | sed -n 's/^error: //p')")" = "repo not initialized (run 'no-mistakes init' first)" ]; then
     RUN_OUT=""
+  fi
+  if [ "${FM_CREW_STATE_ACTIVITY_ONLY:-0}" = 1 ] && [[ "$RUN_OUT" == error:* ]]; then
+    emit unknown run-step "pipeline query refused"
   fi
   if [ -n "$RUN_OUT" ]; then
     # The overview includes run ids and creation order, which the plain runs
@@ -1074,6 +1088,22 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
       fi
     fi
   fi
+fi
+
+# Read-only supervision probe: retain unknown and active pipeline obligations
+# without inspecting the deliberately stopped terminal or querying a forge.
+if [ "${FM_CREW_STATE_ACTIVITY_ONLY:-0}" = 1 ]; then
+  if [ "$HAVE_RUN" = 1 ]; then
+    if [ "$RUN_SOURCE" = coarse ]; then
+      [ "$(fm_nm_run_status_class "$COARSE_STATUS")" = terminal ] || emit active run-step
+    else
+      fm_nm_run_is_active "$RUN_OUT" && emit active run-step
+    fi
+  elif [ "$KIND" = ship ] && ! command -v no-mistakes >/dev/null 2>&1 \
+    && [ -f "$(fm_nm_state_db "$WT")" ]; then
+    emit unknown run-step "pipeline records exist but CLI unavailable"
+  fi
+  emit inactive run-step
 fi
 
 # --- run-step authoritative path -------------------------------------------
