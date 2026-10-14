@@ -340,24 +340,7 @@ cmd_observe() {
   printf '\n'
 }
 
-# Make <commit> readable in this home's own object store without moving any other
-# checkout. Ordered by cost: already present, then this host's Firstmate copy (a
-# read-only fetch of that one commit, which never advances that copy's HEAD), then
-# the home's own origin for that one commit. No pack transport beyond those two.
-import_home_commit() { # <home> <commit>
-  local home=$1 commit=$2
-  if git -C "$home" cat-file -e "$commit^{commit}" 2>/dev/null; then return 0; fi
-  if git -C "$home" fetch --quiet --no-tags -- "$FM_ROOT" "$commit" 2>/dev/null \
-    && git -C "$home" cat-file -e "$commit^{commit}" 2>/dev/null; then
-    return 0
-  fi
-  if git -C "$home" remote get-url origin >/dev/null 2>&1 \
-    && git -C "$home" fetch --quiet --no-tags -- origin "$commit" 2>/dev/null \
-    && git -C "$home" cat-file -e "$commit^{commit}" 2>/dev/null; then
-    return 0
-  fi
-  return 1
-}
+# Target import and safe convergence are owned by fm-ff-lib.sh.
 
 cmd_sync() {
   local id=$1 commit report out

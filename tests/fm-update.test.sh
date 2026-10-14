@@ -249,8 +249,15 @@ test_dead_secondmate_gets_no_action() {
 # The host's instr= suffix is reporting detail; the parent no longer routes on it,
 # so an older host that cannot report a diff can no longer suppress the restart.
 test_legacy_remote_advance_restarts() {
-  local w out fake_ssh
-  w=$(new_world t3e)
+  local w out fake_ssh pin='' branch
+  w=$(new_world "t3e-${1:-legacy}")
+  if [ "${1:-}" = pinned ]; then
+    branch="$(git -C "$w/main" rev-parse --short=12 HEAD)+fork-1"
+    git -C "$w/main" switch -qc "$branch"
+    printf 'customized\n' >> "$w/main/README.md"
+    git -C "$w/main" commit -qam customization
+    pin=$(git -C "$w/main" rev-parse HEAD)
+  fi
   fake_ssh="$w/fakebin/fake-ssh"
   cat > "$fake_ssh" <<'SH'
 #!/usr/bin/env bash
@@ -265,7 +272,8 @@ decode() { printf '%s' "$1" | base64 --decode 2>/dev/null || printf '%s' "$1" | 
 rargs=()
 while IFS= read -r -d '' a; do rargs+=("$a"); done < <(decode "$argv_b64")
 case "${rargs[1]:-}" in
-  update) printf 'synced: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' ;;
+  update) [ -z "${FM_TEST_SYNC_TARGET:-}" ] || exit 92; printf 'synced: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n' ;;
+  sync) [ "${rargs[3]:-}" = "$FM_TEST_SYNC_TARGET" ] || exit 93; printf 'synced: %s\n' "$FM_TEST_SYNC_TARGET" ;;
   state) printf 'alive\n' ;;
   *) exit 91 ;;
 esac
@@ -285,7 +293,7 @@ EOF
   printf -- '- sm1 - remote domain (host: remote-mac; root: /srv/fm; home: /srv/sm1; scope: things; projects: p; added 2026-09-03)\n' \
     > "$w/home/data/secondmates.md"
 
-  out=$(FM_TEST_SSH_BIN="$fake_ssh" run_update "$w")
+  out=$(FM_TEST_SYNC_TARGET="$pin" FM_TEST_SSH_BIN="$fake_ssh" run_update "$w")
 
   assert_contains "$out" "remote secondmate sm1: updated on remote-mac" \
     "the legacy remote advance was not accepted"
@@ -556,12 +564,54 @@ test_primary_update_rebinds_local_watch() {
   pass "T12 a self-update rebinds a locally armed watch on the primary"
 }
 
+test_pinned_release_keeps_primary_and_syncs_exact_commit() {
+  local w out pin branch
+  w=$(new_world pinned)
+  add_sm "$w" sm1
+  git clone -q "$w/main" "$w/standalone"
+  printf 'standalone\n' > "$w/standalone/.fm-secondmate-home"
+  printf -- '- standalone - isolated (home: %s/standalone; scope: tests; projects: p; added 2026-10-14)\n' "$w" > "$w/home/data/secondmates.md"
+  branch="$(git -C "$w/main" rev-parse --short=12 HEAD)+fork-1"
+  git -C "$w/main" switch -qc "$branch"
+  printf 'fork customization\n' > "$w/main/bin/tool.sh"
+  git -C "$w/main" commit -qam fork
+  pin=$(git -C "$w/main" rev-parse HEAD)
+  mkdir -p "$w/sm1/data"
+  printf 'private evidence\n' > "$w/sm1/data/private"
+  # Ignore private data exactly as real homes do.
+  printf 'data/\n' >> "$w/main/.git/info/exclude"
+  bump_origin "$w" instr
+  out=$(run_update "$w")
+  [ "$(git -C "$w/main" symbolic-ref --short HEAD)" = "$branch" ] || fail 'update switched installed release'
+  [ "$(git -C "$w/main" rev-parse HEAD)" = "$pin" ] || fail 'update moved frozen release'
+  [ "$(git -C "$w/sm1" rev-parse HEAD)" = "$pin" ] || fail "secondmate followed main instead of installed commit: $out"
+  [ "$(cat "$w/sm1/data/private")" = 'private evidence' ] || fail 'update changed private records'
+  [ "$(git -C "$w/standalone" rev-parse HEAD)" = "$pin" ] || fail "standalone secondmate did not import installed commit: $out"
+  git -C "$w/main" switch -qc "${branch%-1}-2"
+  printf 'next release\n' >> "$w/main/README.md"
+  git -C "$w/main" commit -qam next-release
+  out=$(run_update "$w")
+  [ "$(git -C "$w/sm1" rev-parse HEAD)" = "$(git -C "$w/main" rev-parse HEAD)" ] || fail 'secondmate missed explicitly selected next version'
+  git -C "$w/main" switch -q "$branch"
+  out=$(run_update "$w")
+  [ "$(git -C "$w/main" rev-parse HEAD)" = "$pin" ] || fail 'rollback changed the prior installed reference'
+  assert_contains "$out" 'reconciliation required' 'rollback silently discarded newer secondmate state'
+  [ "$(cat "$w/sm1/data/private")" = 'private evidence' ] || fail 'rollback changed private data'
+  pass 'pinned versions sync exact commits, retain private data and expose rollback reconciliation'
+}
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  "$FM_TEST_ONLY"
+  exit 0
+fi
+test_pinned_release_keeps_primary_and_syncs_exact_commit
+
 test_updates_main_and_secondmate
 test_reread_gate_is_instruction_only
 test_bin_only_advance_restarts
 test_unprovable_runtime_gets_fallback_nudge
 test_dead_secondmate_gets_no_action
 test_legacy_remote_advance_restarts
+test_legacy_remote_advance_restarts pinned
 test_dirty_secondmate_skipped
 test_diverged_secondmate_skipped
 test_squash_merged_divergence_reconciles

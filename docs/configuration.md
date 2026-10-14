@@ -1431,7 +1431,7 @@ A herdr, zellij, or cmux home is therefore never told `tmux` is missing, and the
 
 **Checkout diagnostics**
 
-Bootstrap also reports a `TANGLE:` line when `FM_ROOT` is on a named non-default branch; follow the printed checkout remediation rather than treating it as an installable tool problem.
+Bootstrap also reports a `TANGLE:` line when `FM_ROOT` is on a named non-default branch other than a pinned fork version; follow the printed checkout remediation rather than treating it as an installable tool problem.
 In a read-only session that did not get the fleet lock, the same line is advisory and omits the checkout command.
 
 **Project refresh at startup**

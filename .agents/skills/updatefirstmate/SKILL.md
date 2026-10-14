@@ -12,7 +12,7 @@ metadata:
 # updatefirstmate
 
 Self-update firstmate in place.
-Firstmate is its own repo, behind the same no-mistakes gate as any project, so new tracked material (`AGENTS.md`, `bin/`, `.agents/skills/`, and public `skills/`) reaches `main` and then sits there until each running firstmate pulls it.
+The existing update owner, `bin/fm-update.sh`, preserves an installed version branch and synchronizes secondmates to its exact installed commit. Changing that version is an explicit operator decision. Ordinary installations continue to follow origin. No-Mistakes is separately authorized under `validation-supervision`.
 Only `AGENTS.md`, `bin/`, and `.agents/skills/` are a running firstmate instruction surface; public `skills/` is installer-facing and is not loaded by firstmate.
 This skill performs that pull for the running main firstmate and every secondmate, without disturbing any in-flight work.
 Updating is consumption, not publication: it only pulls from upstream, so every home runs it regardless of role, and the firstmate-repository publication boundary (`firstmate-self-repo`) never applies to it.
@@ -29,7 +29,7 @@ The only live mates that do not restart are the ones whose home the update pass 
 **One-time rollout note:** the update that carries this change is still executed by the previous release, which restarts only the mates whose `AGENTS.md` or `.agents/skills/` moved on that pass. After it completes, run `bin/fm-secondmate-restart.sh <fm-id>...` once with every live second mate ID, not only the ones that release named; later updates follow the normal flow below.
 
 The primary update is fast-forward only, while each secondmate uses the same guarded convergence path plus one narrow recovery for squash-merged local history.
-For a remote route, it updates the configured Firstmate code root on that host from its own origin, then guardedly fast-forwards the persistent home to that code-root commit.
+For a remote route on an ordinary installation, it updates the configured Firstmate code root from its own origin before synchronizing the home. A pinned installation instead supplies its exact installed commit through the existing parent-targeted sync. Unsafe divergence, including a rollback, requires explicit reconciliation and never discards private data.
 It never forces, never creates a merge commit, and never stashes.
 A clean secondmate divergence advances with `reset --keep` only when a three-way tree proof shows its complete local result is already present at the target, which recognizes squash-merged contributions without discarding unique content.
 Every other dirty, diverged, offline, or wrong-branch target is skipped and reported, and a genuine divergence leaves a durable `state/.secondmate-update-reconcile/<id>.pending` record that future bootstrap and update passes surface until convergence clears it.

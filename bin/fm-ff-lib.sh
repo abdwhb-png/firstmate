@@ -37,6 +37,8 @@
 # any other worktree's checkout. A standalone remote home may instead advance
 # its checked-out default branch under the same guard.
 
+# shellcheck source=bin/fm-tangle-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-tangle-lib.sh"
 SUB_HOME_MARKER="${SUB_HOME_MARKER:-.fm-secondmate-home}"
 # shellcheck source=bin/fm-secondmate-registry-lib.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-secondmate-registry-lib.sh"
@@ -70,6 +72,10 @@ default_branch() {
 # stray feature branch to the fleet. Echoes the commit SHA, or returns 1.
 primary_head_commit() {
   local root=$1 default
+  if fm_pinned_release_branch "$root" >/dev/null; then
+    git -C "$root" rev-parse --verify 'HEAD^{commit}'
+    return
+  fi
   default=$(default_branch "$root") || return 1
   git -C "$root" rev-parse --verify --quiet "refs/heads/$default^{commit}" 2>/dev/null || return 1
 }
@@ -217,6 +223,23 @@ fetch_once() {
   fi
   if git -C "$dir" fetch origin --prune --quiet 2>/dev/null; then
     [ -n "$common" ] && FETCHED="$FETCHED $common"
+    return 0
+  fi
+  return 1
+}
+
+# Import exactly the selected commit without moving the source checkout or
+# following its default branch. Shared by local pinned and remote sync.
+import_home_commit() { # <home> <commit>
+  local home=$1 commit=$2
+  if git -C "$home" cat-file -e "$commit^{commit}" 2>/dev/null; then return 0; fi
+  if git -C "$home" fetch --quiet --no-tags -- "$FM_ROOT" "$commit" 2>/dev/null \
+    && git -C "$home" cat-file -e "$commit^{commit}" 2>/dev/null; then
+    return 0
+  fi
+  if git -C "$home" remote get-url origin >/dev/null 2>&1 \
+    && git -C "$home" fetch --quiet --no-tags -- origin "$commit" 2>/dev/null \
+    && git -C "$home" cat-file -e "$commit^{commit}" 2>/dev/null; then
     return 0
   fi
   return 1
@@ -402,6 +425,14 @@ ff_target() {
     return 0
   }
 
+  if fm_pinned_release_branch "$dir" >/dev/null; then
+    if [ "$base_mode" = origin ]; then
+      echo "$label: pinned at $(git -C "$dir" rev-parse HEAD); select the next release explicitly"
+      FF_STATUS=current
+      return 0
+    fi
+    default=$(fm_pinned_release_branch "$dir")
+  fi
   # Resolve the fast-forward base from base_mode (see header).
   if [ "$base_mode" = origin ]; then
     if ! git -C "$dir" remote get-url origin >/dev/null 2>&1; then
@@ -418,8 +449,13 @@ ff_target() {
   fi
 
   if ! git -C "$dir" rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
-    echo "$label: skipped: $base does not exist"
-    return 0
+    if [ -n "$secondmate_id" ] && fm_pinned_release_branch "$FM_ROOT" >/dev/null \
+      && [ "$base" = "$(primary_head_commit "$FM_ROOT")" ] && import_home_commit "$dir" "$base"; then
+      : # The existing import owner supplied only the installed release object.
+    else
+      echo "$label: skipped: $base does not exist and cannot be imported"
+      return 0
+    fi
   fi
 
   cur=$(git -C "$dir" symbolic-ref --short HEAD 2>/dev/null || echo "")

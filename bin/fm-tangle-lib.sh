@@ -35,6 +35,15 @@ fm_default_branch() {
   return 1
 }
 
+# A release branch is an explicit installation pin. It is never an update
+# channel: a different release is selected by an operator's branch switch.
+fm_pinned_release_branch() {  # <checkout>
+  local branch
+  branch=$(git -C "$1" symbolic-ref --quiet --short HEAD 2>/dev/null) || return 1
+  printf '%s\n' "$branch" | grep -Eq '^[0-9a-f]{12}\+fork-[1-9][0-9]*$' || return 1
+  printf '%s\n' "$branch"
+}
+
 # If the git checkout at <root> is tangled - on a NAMED branch that is not its
 # default branch - echo the offending branch name and return 0. For every healthy
 # state (not a git work tree, detached HEAD, or already on the default branch)
@@ -46,6 +55,7 @@ fm_primary_tangle_branch() {
   git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
   cur=$(git -C "$root" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
   [ -n "$cur" ] || return 1
+  fm_pinned_release_branch "$root" >/dev/null && return 1
   default=$(fm_default_branch "$root") || return 1
   [ "$cur" = "$default" ] && return 1
   printf '%s\n' "$cur"
