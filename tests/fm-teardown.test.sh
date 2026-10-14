@@ -4935,16 +4935,18 @@ test_unreadable_startup_source_refuses_before_cleanup() {
   pass "an unreadable teardown startup source refuses before cleanup"
 }
 
-test_missing_adapter_sibling_refuses_before_cleanup() {
-  local case_dir rc
-  case_dir=$(make_case missing-adapter-sibling)
-  write_meta "$case_dir" local-only ship
-  prepare_teardown_source_copy "$case_dir"
-  rm -f "$case_dir/test-root/bin/fm-session-lock-lib.sh"
-  rc=0
-  run_copied_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
-  assert_source_refusal_preserved_state "$case_dir" "missing-adapter-sibling" "required tmux source"
-  pass "a missing adapter sibling refuses before cleanup"
+test_missing_process_identity_source_refuses_before_cleanup() {
+  local case_dir rc source
+  for source in fm-session-lock-lib.sh fm-agent-process-lib.sh fm-gemini-lib.sh; do
+    case_dir=$(make_case "missing-$source")
+    write_meta "$case_dir" local-only ship
+    prepare_teardown_source_copy "$case_dir"
+    rm -f "$case_dir/test-root/bin/$source"
+    rc=0
+    run_copied_teardown "$case_dir" --force > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    assert_source_refusal_preserved_state "$case_dir" "missing-$source" "required source $source"
+    pass "missing process identity source $source refuses before cleanup"
+  done
 }
 
 test_forced_child_missing_adapter_sibling_refuses_before_cleanup() {
@@ -5030,7 +5032,7 @@ test_retained_sources_still_reach_the_ordinary_refusal() {
 
 test_missing_startup_source_refuses_before_cleanup
 test_unreadable_startup_source_refuses_before_cleanup
-test_missing_adapter_sibling_refuses_before_cleanup
+test_missing_process_identity_source_refuses_before_cleanup
 test_forced_child_missing_adapter_sibling_refuses_before_cleanup
 test_forced_secondmate_own_missing_adapter_sibling_refuses_before_child_cleanup
 test_retained_sources_still_reach_the_ordinary_refusal

@@ -365,6 +365,9 @@ for _teardown_source in \
   fm-operational-input.sh \
   fm-marker-lib.sh \
   fm-tmux-lib.sh \
+  fm-agent-process-lib.sh \
+  fm-session-lock-lib.sh \
+  fm-gemini-lib.sh \
   fm-composer-lib.sh \
   fm-cursor-lib.sh \
   fm-nm-run-lib.sh \
