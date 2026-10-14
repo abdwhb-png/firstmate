@@ -972,14 +972,17 @@ SELECTED_RUN_ID=""
 # Scouts and secondmates never drive a no-mistakes validation of their own
 # worktree, so skip the lookup for them and read state from pane/log directly.
 if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/null 2>&1; then
+  RUN_QUERY_STATUS=0
   if [ "${FM_CREW_STATE_ACTIVITY_ONLY:-0}" = 1 ]; then
-    RUN_OUT=$(fm_nm_run_checked "$WT" "$NM_TIMEOUT" axi status) || emit unknown run-step "pipeline query failed"
-    [ -n "$RUN_OUT" ] || emit unknown run-step "pipeline query empty"
+    RUN_OUT=$(fm_nm_run_checked "$WT" "$NM_TIMEOUT" axi status) || RUN_QUERY_STATUS=$?
   else
     RUN_OUT=$(nm_run axi status)
   fi
-  if [ "$(strip_quotes "$(printf '%s\n' "$RUN_OUT" | sed -n 's/^error: //p')")" = "repo not initialized (run 'no-mistakes init' first)" ]; then
+  if [ "$RUN_QUERY_STATUS" -le 1 ] && [ "$(strip_quotes "$(printf '%s\n' "$RUN_OUT" | sed -n 's/^error: //p')")" = "repo not initialized (run 'no-mistakes init' first)" ]; then
     RUN_OUT=""
+  elif [ "${FM_CREW_STATE_ACTIVITY_ONLY:-0}" = 1 ]; then
+    [ "$RUN_QUERY_STATUS" = 0 ] || emit unknown run-step "pipeline query failed"
+    [ -n "$RUN_OUT" ] || emit unknown run-step "pipeline query empty"
   fi
   if [ "${FM_CREW_STATE_ACTIVITY_ONLY:-0}" = 1 ] && [[ "$RUN_OUT" == error:* ]]; then
     emit unknown run-step "pipeline query refused"

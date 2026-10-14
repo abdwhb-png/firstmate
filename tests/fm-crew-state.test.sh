@@ -5565,19 +5565,37 @@ test_captured_completed_history() {
   pass 'captured completed status yields to synthetic subsequent development'
 }
 
-test_captured_axi_status_shapes
-test_captured_inventory_replay
-test_captured_authority_transition
-test_captured_completed_history
-cancellation_failures=0
-for cancellation_test in test_captured_cancelled_review_has_no_verdict \
-  test_terminal_green_delivery_disposition \
-  test_cancelled_without_delivery_has_no_verdict \
-  test_cancelled_fleet_inventory_is_unverified_not_contradictory \
-  test_cancelled_delivery_and_skipped_rebase; do
-  ("$cancellation_test") || cancellation_failures=$((cancellation_failures + 1))
-done
-[ "$cancellation_failures" -eq 0 ] || fail "$cancellation_failures cancellation test groups failed"
+test_stopped_uninitialized_repo_needs_no_pipeline_supervision() {
+  reset_fakes
+  local d out code
+  d=$(new_case stopped-uninitialized)
+  make_repo_on_branch "$d/wt" fm/stopped
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/stopped.meta" "window=fm:fm-stopped" "worktree=$d/wt" "kind=ship" "spawn_gen=s1" "stopped_gen=s1"
+  export FM_CREW_STATE_ACTIVITY_ONLY=1
+  export FM_FAKE_AXI_STATUS="error: repo not initialized (run 'no-mistakes init' first)"
+  for code in 1 0; do
+    export FM_FAKE_AXI_STATUS_ERROR=$code
+    out=$(run_crew_state "$d" stopped)
+    assert_equals 'state: inactive · source: run-step' "$out" 'uninitialized repository has no pipeline obligation'
+  done
+  # The real supervision owner must consume that verdict while retaining meta.
+  # shellcheck source=bin/fm-supervision-lib.sh
+  . "$ROOT/bin/fm-supervision-lib.sh"
+  PATH="$d/fakebin:$PATH" fm_supervision_status "$d/state"
+  assert_equals false "$FM_SUP_NEEDED" 'confirmed stop releases supervision without deleting metadata'
+  [ -f "$d/state/stopped.meta" ] || fail 'stop evidence was removed'
+  export FM_FAKE_AXI_STATUS_ERROR=124
+  out=$(run_crew_state "$d" stopped)
+  assert_contains "$out" 'state: unknown' 'a timed-out query cannot establish absence'
+  export FM_FAKE_AXI_STATUS_ERROR=1 FM_FAKE_AXI_STATUS='error: database unavailable'
+  out=$(run_crew_state "$d" stopped)
+  assert_contains "$out" 'state: unknown' 'an actual query failure stays unknown'
+  PATH="$d/fakebin:$PATH" fm_supervision_status "$d/state"
+  assert_equals true "$FM_SUP_NEEDED" 'unknown pipeline activity still needs supervision'
+  unset FM_CREW_STATE_ACTIVITY_ONLY
+  pass 'stopped uninitialized repo releases supervision while genuine query failures retain it'
+}
 
 test_stopped_agent_retains_attributed_pipeline_supervision() {
   reset_fakes
@@ -5597,7 +5615,22 @@ if [ -n "${FM_TEST_ONLY:-}" ]; then
   "$FM_TEST_ONLY"
   exit 0
 fi
+test_captured_axi_status_shapes
+test_captured_inventory_replay
+test_captured_authority_transition
+test_captured_completed_history
+cancellation_failures=0
+for cancellation_test in test_captured_cancelled_review_has_no_verdict \
+  test_terminal_green_delivery_disposition \
+  test_cancelled_without_delivery_has_no_verdict \
+  test_cancelled_fleet_inventory_is_unverified_not_contradictory \
+  test_cancelled_delivery_and_skipped_rebase; do
+  ("$cancellation_test") || cancellation_failures=$((cancellation_failures + 1))
+done
+[ "$cancellation_failures" -eq 0 ] || fail "$cancellation_failures cancellation test groups failed"
+
 test_stopped_agent_retains_attributed_pipeline_supervision
+test_stopped_uninitialized_repo_needs_no_pipeline_supervision
 
 test_active_run_is_authoritative
 test_stale_needs_decision_superseded
