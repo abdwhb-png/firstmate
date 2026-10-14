@@ -55,7 +55,7 @@ The gate is code, not memory: `bin/fm-role-lib.sh`'s `fm_role_gate_self_publish`
 - `bin/fm-promote.sh` applies the same gate to scout promotion so the in-place path grants no more than a fresh spawn.
 - `local-only` publishes nothing, so it never needs authority and never takes consent.
 
-An authorized contribution then flows through the task's normal delivery contract - usually no-mistakes - like any other project; the grant answers only "may this publish", never "how".
+An authorized contribution follows the task's delivery contract. Publication consent grants no permission to initialize or run No-Mistakes; its separate authorization boundary is owned by `validation-supervision`.
 
 A gate refusal names the exact remedy: write `maintainer <scope>` into `config/firstmate-role`, or pass `--upstream-consent <scope>` for that one task with the captain's explicit approval.
 Never work around a refusal by pointing the task at a second checkout, fork, or parent clone; `fm_role_self_repo` treats every repository sharing firstmate's lineage as firstmate's own.

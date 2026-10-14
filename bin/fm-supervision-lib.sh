@@ -34,6 +34,10 @@ fm_supervision_agent_stopped() {  # <meta>
 
 fm_supervision_task_needed() {  # <meta>
   local meta=$1 dir id result owner
+  if [ "$(sed -n 's/^lifecycle=//p' "$meta" | tail -1)" = prepared ] \
+    && [ -z "$(sed -n 's/^spawn_gen=//p' "$meta")" ]; then
+    return 1
+  fi
   fm_supervision_agent_stopped "$meta" || return 0
   dir=${meta%/*}; id=${meta##*/}; id=${id%.meta}
   owner="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-crew-state.sh"

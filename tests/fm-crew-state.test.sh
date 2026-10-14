@@ -1439,6 +1439,20 @@ test_terminal_passed() {
   pass "terminal passed run is authoritative"
 }
 
+test_mdd_pipeline_pass_is_only_a_candidate() {
+  reset_fakes
+  local d out
+  d=$(new_case mdd-passed)
+  make_repo_on_branch "$d/wt" fm/mdd-task
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/mdd-task.meta" "window=fm:fm-mdd-task" "worktree=$d/wt" "kind=ship" "mdd_state=.missions/example/state.json"
+  FM_FAKE_AXI_STATUS="$(run_passed fm/mdd-task)"
+  out=$(run_crew_state "$d" mdd-task)
+  assert_contains "$out" 'state: parked' 'pipeline pass must await MDD examination'
+  assert_contains "$out" 'MDD candidate' 'candidate must remain actionable for coordinator'
+  pass 'pipeline pass cannot complete an unaccepted MDD mission'
+}
+
 test_terminal_passed_with_override() {
   reset_fakes
   local d; d=$(new_case passed-with-override)
@@ -5617,6 +5631,7 @@ test_ci_fixing_after_green_stays_working
 test_top_level_fixing_ci_running_after_green_stays_working
 test_top_level_fixing_done_log_stays_working
 test_terminal_passed
+test_mdd_pipeline_pass_is_only_a_candidate
 test_terminal_passed_with_override
 test_terminal_passed_with_skips
 test_terminal_passed_uses_matching_retirement_receipt_without_forge

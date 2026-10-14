@@ -248,10 +248,13 @@ fi
 # A ship `done:` is not current-state done while bin/fm-dod-lib.sh refuses the
 # named-head reachability gate: that claim is blocked so a disposable copy is
 # not treated as finished-and-safe.
-emit_ship_status_done() {  # [extra-detail]
-  local extra=${1:-} reason
+emit_ship_status_done() {  # [extra-detail] [source]
+  local extra=${1:-} source=${2:-status-log} reason
   if reason=$(fm_dod_accept_ship_done "$KIND" "$(meta_value mode)" "$WT" "$(meta_value project)" "$LOG_LINE" "$STATE" "$ID" "$META"); then
-    emit "done" status-log "$(status_line_note "$LOG_LINE")${extra:+${SEP}$extra}"
+    emit "done" "$source" "$(status_line_note "$LOG_LINE")${extra:+${SEP}$extra}"
+  fi
+  if [ -n "$(meta_value mdd_state)" ]; then
+    emit parked "$source" "MDD candidate awaiting coordinator examination${SEP}$reason"
   fi
   emit blocked status-log "$reason"
 }
@@ -1288,6 +1291,9 @@ if [ "$HAVE_RUN" = 1 ]; then
   esac
 
   [ -z "$SELECTED_RUN_ID" ] || RUN_DETAIL="$RUN_DETAIL${SEP}run: $SELECTED_RUN_ID"
+  if [ "$RUN_STATE" = "done" ] && [ -n "$(meta_value mdd_state)" ]; then
+    emit_ship_status_done "$RUN_DETAIL" run-step
+  fi
   emit "$RUN_STATE" run-step "$RUN_DETAIL"
 fi
 

@@ -337,8 +337,10 @@ test_ship_mode_is_explicit_not_registry() {
   brief="$home/data/brief-explicit-a5/brief.md"
   grep -qx "Delivery contract: mode=no-mistakes" "$brief" \
     || fail "registered direct-PR posture overrode the explicit --mode"
-  assert_grep "Firstmate will then instruct you to run /no-mistakes" "$brief" \
-    "explicit no-mistakes brief did not render the pipeline definition of done"
+  assert_grep "explicit task-scoped user authorization" "$brief" \
+    "explicit no-mistakes brief did not require a separate grant"
+  assert_no_grep 'if it reports the repo is not initialized here, run' "$brief" 'mode must not authorize initialization'
+  assert_grep 'initialization requires explicit applicable authorization' "$brief" 'setup must preserve authorization boundary'
 
   # An unregistered project is not a blocker either, because nothing is looked up.
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-explicit-a6 never-registered --mode local-only >/dev/null 2>&1 \
@@ -1541,6 +1543,8 @@ test_crewmate_scaffolds_forbid_pool_administration() {
 
   pass "fm-brief.sh: every crewmate scaffold forbids administering the shared worktree pool"
 }
+
+if [ -n "${FM_TEST_ONLY:-}" ]; then "$FM_TEST_ONLY"; exit 0; fi
 
 test_script_parses
 test_no_heredoc_in_command_substitution

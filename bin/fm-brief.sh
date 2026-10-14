@@ -738,7 +738,7 @@ case "$MODE" in
     ;;
   *)  # no-mistakes
     SETUP2="
-2. Run \`no-mistakes doctor\`; if it reports the repo is not initialized here, run \`no-mistakes init\`."
+2. No-Mistakes initialization requires explicit applicable authorization. A selected delivery mode alone does not permit initialization or a run. Follow FirstMate's scoped grant before invoking the pipeline."
     ;;
 esac
 RULE1=$(fm_ship_rule_one "$MODE" "$ID" "$BRANCH" "$FORGE" "$BASE_BRANCH") || exit 1

@@ -8,7 +8,7 @@ metadata:
 
 # Validation supervision
 
-For a no-mistakes ship, trigger validation on the same worker after its implementation commit, using the harness invocation owned by `harness-adapters`.
+Start a No-Mistakes run only with explicit user authorization applicable to this task and run. A delivery mode, saved preference or returned implementation is insufficient. Record the grant in the existing task evidence before using the invocation owned by `harness-adapters`. For an MDD task, use the authorization and action-check operations documented by `bin/fm-control.sh` before instructing a run. The referenced evidence must contain the actual applicable user grant, not a delivery preference or a new assertion invented by the coordinator. A modifying run precedes final independent acceptance, and its changes must be examined before delivery.
 The task worker that starts a no-mistakes run drives the pipeline and owns every `no-mistakes axi run` and `no-mistakes axi respond` call through the next gate or outcome.
 Firstmate never invokes `no-mistakes axi respond` for a crew-owned run.
 `bin/fm-dod-lib.sh` owns the worker-side `--intent` contract.

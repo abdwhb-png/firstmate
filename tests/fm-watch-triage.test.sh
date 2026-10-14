@@ -6616,6 +6616,18 @@ test_confirmed_stop_does_not_alarm_on_retained_terminal() {
   pass "watcher keeps confirmed stopped terminal and evidence without inactive alarms"
 }
 
+test_prepared_mission_does_not_alarm() {
+  local dir state
+  dir=$(wedge_threshold_fixture prepared-only 'working: preparing contracts' 2000)
+  state="$dir/state"
+  printf 'lifecycle=prepared\nkind=ship\n' >> "$state/wedge.meta"
+  wedge_threshold_round "$state" "$dir/fakebin" "$dir/watch.out" "$dir/pane.txt" test:fm-wedge \
+    'state: unknown · source: pane' absorb || fail "prepared task generated an alarm"
+  [ "$(wedge_stale_wakes "$state" test:fm-wedge)" -eq 0 ] || fail "prepared task has stale notifications"
+  [ -f "$state/wedge.meta" ] || fail "watcher deleted task evidence"
+  pass "watcher keeps prepared task and evidence without inactive alarms"
+}
+
 # CI's stock macOS Bash lane sets FM_TEST_ONLY to run just the bash-3.2
 # churn-deferral regression. The rest of this file is not a 3.2 snapshot suite.
 if [ -n "${FM_TEST_ONLY:-}" ]; then
@@ -6624,6 +6636,7 @@ if [ -n "${FM_TEST_ONLY:-}" ]; then
 fi
 
 test_confirmed_stop_does_not_alarm_on_retained_terminal
+test_prepared_mission_does_not_alarm
 test_status_span_actionable_classifier
 test_status_span_survives_a_later_routine_append
 test_status_span_respects_decision_closure

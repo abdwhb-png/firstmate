@@ -45,6 +45,7 @@ relaunch_cleanup() {
   for d in "${TASK_TMPS[@]:-}"; do
     [ -n "$d" ] && rm -rf "$d"
   done
+  chmod -R u+w "$TMP_ROOT" 2>/dev/null || true
   rm -rf "$TMP_ROOT"
 }
 trap relaunch_cleanup EXIT
@@ -2528,6 +2529,60 @@ SH
     || fail "the dialog file must be gone when the control lock is released, got: $(cat "$trace" 2>/dev/null)"
   pass "fm-control exit removes the dialog file before it releases the control lock"
 }
+
+test_mdd_prepared_start_and_fresh_reviewer() {
+  [ -n "${FM_TEST_MDD_BUNDLE:-}" ] || { echo 'skip - real MDD bundle not supplied'; return; }
+  local dir out rc wt gen harness assignment
+  for harness in codex pi; do
+  dir=$(new_case "mdd-start-$harness" mdd-test)
+  printf '#!/usr/bin/env bash\nprintf "Options: --tui-mode\\n"\n' > "$dir/fakebin/pi"
+  chmod +x "$dir/fakebin/pi"
+  : > "$dir/fake/windows"
+  printf firstmate > "$dir/fake/session-name"
+  mkdir -p "$dir/project"
+  git -C "$dir/project" init -q -b main
+  git -C "$dir/project" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm init --allow-empty
+  out=$(run_spawn "$dir" mdd-test "$dir/project" --prepare --mdd-state .missions/example/state.json \
+    --mdd-skill "$FM_TEST_MDD_BUNDLE" --mode local-only --yolo off --harness "$harness"); rc=$?
+  expect_code 0 "$rc" "$out"
+  wt=$(meta_field "$dir" mdd-test worktree)
+  node "$ROOT/tests/mdd-fixture.mjs" "$FM_TEST_MDD_BUNDLE" "$wt" || fail 'mission fixture failed'
+  printf '%s' "$wt" > "$dir/fake/cwd"
+  printf 'zsh' > "$dir/fake/command"
+  printf '%s' "$harness" > "$dir/fake/becomes"
+  out=$(run_control "$dir" mdd-test assign --role implementer --brief-file "$wt/.missions/example/handoff.md" --authority "$wt/.missions/example/authority.md"); rc=$?
+  expect_code 0 "$rc" "$out"
+  out=$(run_control "$dir" mdd-test start); rc=$?
+  expect_code 0 "$rc" "prepared task did not launch: $out"
+  gen=$(meta_field "$dir" mdd-test spawn_gen)
+  [ -n "$gen" ] || fail 'launch has no execution identity'
+  [ "$(meta_field "$dir" mdd-test worktree)" = "$wt" ] || fail 'launch replaced mission worktree'
+  out=$(run_control "$dir" mdd-test start); rc=$?
+  [ "$rc" -ne 0 ] || fail 'second concurrent execution was allowed'
+  [ "$(meta_field "$dir" mdd-test spawn_gen)" = "$gen" ] || fail 'failed second start changed generation'
+  assignment=$(meta_field "$dir" mdd-test mdd_assignment)
+  printf 'retained local work\n' > "$wt/local-evidence.txt"
+  out=$(run_control "$dir" mdd-test relaunch); rc=$?
+  expect_code 0 "$rc" "$out"
+  [ "$(meta_field "$dir" mdd-test mdd_assignment)" = "$assignment" ] || fail 'replacement invented a new packet'
+  [ "$(cat "$wt/local-evidence.txt")" = 'retained local work' ] || fail 'replacement lost uncommitted work'
+  [ "$(meta_field "$dir" mdd-test spawn_gen)" != "$gen" ] || fail 'replacement reused execution generation'
+  gen=$(meta_field "$dir" mdd-test spawn_gen)
+  out=$(run_control "$dir" mdd-test assign --role reviewer --brief-file "$wt/.missions/example/handoff.md" --authority "$wt/.missions/example/authority.md"); rc=$?
+  expect_code 0 "$rc" "$out"
+  [ "$(cat "$dir/fake/command")" = zsh ] || fail 'review assignment did not stop implementer'
+  out=$(run_control "$dir" mdd-test start); rc=$?
+  expect_code 0 "$rc" "$out"
+  [ "$(meta_field "$dir" mdd-test spawn_gen)" != "$gen" ] || fail 'review reused implementation session identity'
+  if grep -E -- '(codex|pi).*(resume|--continue|--session )' "$dir/fake/literal" >/dev/null; then fail 'review inherited old conversation'; fi
+  pass "prepared mission launches and replaces implementer with fresh $harness reviewer in same task"
+  done
+}
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  "$FM_TEST_ONLY"
+  exit 0
+fi
+test_mdd_prepared_start_and_fresh_reviewer
 
 test_exit_and_relaunch_remove_the_dialog_file
 test_exit_removes_the_dialog_file_before_releasing_the_lock

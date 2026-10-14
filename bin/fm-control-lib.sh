@@ -50,12 +50,18 @@ fm_control_verbs() {
 interrupt
 exit
 relaunch
+assign
+start
+candidate
+accept
+authorize
+action-check
 EOF
 }
 
 fm_control_verb_allowed() {  # <verb>
   case "${1-}" in
-    interrupt|exit|relaunch) return 0 ;;
+    interrupt|exit|relaunch|assign|start|candidate|accept|authorize|action-check) return 0 ;;
   esac
   return 1
 }

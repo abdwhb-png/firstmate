@@ -73,7 +73,7 @@ puts YAML.load_file(ARGV[0]).fetch("jobs").fetch(ARGV[1]).fetch("timeout-minutes
 # Tier membership is the executable inventory of the timeout policy: a new job
 # must join a tier, and a job-level value outside these tiers is exactly the
 # one-off number the policy removed.
-FAST_TIER_JOBS='test-coverage invariants tests-timing-aggregate'
+FAST_TIER_JOBS='test-coverage invariants tests-timing-aggregate tests-mdd'
 NORMAL_TIER_JOBS='lint tests-portable-parallel-1 tests-portable-parallel-2 tests-portable-serial macos-stock-bash'
 HEAVY_TIER_JOBS='tests-herdr'
 
@@ -258,3 +258,18 @@ test_every_job_belongs_to_exactly_one_timeout_tier
 test_fast_tier_shares_one_short_tripwire
 test_normal_tier_shares_one_budget
 test_heavy_tier_keeps_a_step_tripwire_under_a_job_backstop
+
+# Fork releases retain the same CI coverage and qualify the external interface.
+ruby -ryaml - "$CI_WORKFLOW" "$ROOT/.github/workflows/no-mistakes-required.yml" <<'RUBY' || fail 'fork CI contract'
+ci = YAML.load_file(ARGV[0])
+events = ci["on"] || ci[true]
+["push", "pull_request"].each do |event|
+  raise "versioned releases not covered" unless events.fetch(event).fetch("branches").any? { |pattern| File.fnmatch(pattern, "2911a3bb6dd1+fork-1") }
+end
+steps = ci.fetch("jobs").fetch("tests-mdd").fetch("steps")
+raise "real bundle not pinned" unless steps.any? { |step| step.dig("with", "repository") == "abdwhb-png/agent-tools" && step.dig("with", "ref") == "71a3d3570d5dd04992f16dfff617bb31090d7732" }
+raise "no real qualification" unless steps.any? { |step| step["run"].to_s.include?("tests/fm-mdd.test.sh") && step.dig("env", "FM_TEST_MDD_BUNDLE") }
+condition = YAML.load_file(ARGV[1]).fetch("jobs").fetch("check").fetch("if")
+raise "fork still requires official No-Mistakes attestation" unless condition.include?("github.repository == 'kunchenguid/firstmate'")
+RUBY
+pass 'fork branches run CI and real MDD qualification without official attestation requirement'

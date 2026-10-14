@@ -66,7 +66,7 @@ A forge composes with `no-mistakes`, `direct-PR`, and `no-mistakes-prod-only`, a
 
 Confirm the source URL, local project name, delivery posture, and autonomy posture, stating the resolved default for each rather than asking the captain to invent one.
 Clone into `projects/<name>` and add the registry entry only after the destination is known to be unused.
-A `no-mistakes` or `no-mistakes-prod-only` project must have an `origin` remote and must complete the initialization procedure below, because a conditional policy's product-facing work runs the pipeline while its internal-only work still takes the direct PR.
+A `no-mistakes` or `no-mistakes-prod-only` preference does not authorize initialization or a pipeline run. Keep its `origin` remote requirement, and perform initialization below only when explicitly authorized.
 A `direct-PR` project needs an `origin` remote but skips no-mistakes initialization.
 A `local-only` project may have no remote and skips no-mistakes initialization.
 Confirm the matching CLI is authenticated for a non-GitHub host: `glab auth login` for a GitLab project, whose merge watch and merge use glab, or a `tea login add` for a `forge=forgejo` project, whose merge watch, merge, and generated ship brief use tea.
@@ -83,7 +83,7 @@ The captain's request to create that local project authorizes this local initial
 
 ## Initialize
 
-Run no-mistakes initialization only for `no-mistakes` and `no-mistakes-prod-only` projects:
+Run no-mistakes initialization only when explicitly authorized for a `no-mistakes` or `no-mistakes-prod-only` project:
 
 ```sh
 (cd projects/<name> && no-mistakes init && no-mistakes doctor)

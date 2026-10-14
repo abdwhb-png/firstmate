@@ -361,6 +361,7 @@ Where a harness's own command limit is not established, assume it bounds command
 ${pr_return_line}Whenever a drive call returns without a gate or an outcome - its own wait elapsed, or it was killed or timed out - reattach at once by re-running \`no-mistakes axi run\` without flags, backgrounded the same way${pr_reattach_clause} if it refuses because no run is active, read the finished outcome from \`no-mistakes axi status\`."
   fi
   cat <<EOF
+Run these pipeline steps only under explicit task-scoped user authorization relayed by FirstMate. A delivery mode, saved preference, validation request or prior run is not consent for a new run. If the grant is missing, return the specific decision instead of starting the pipeline.
 You drive no-mistakes by responding to its gates, not by implementing fixes.
 Follow the guidance no-mistakes itself provides for the mechanics: it loads when you invoke /no-mistakes, and \`no-mistakes axi run --help\` plus the \`help\` lines in each \`axi\` response are authoritative and version-matched to the installed binary.
 When starting no-mistakes, pass \`--intent\` as only this brief's \`## Captain's intent\` subsection body, not its heading, plus any later words the captain actually said.
@@ -458,8 +459,7 @@ Pass \`--skip push,pr,ci\` on every \`no-mistakes axi run\` for this task, and s
 Those three are the only steps that reach a forge, and skipping them is a supported outcome, not a degraded one.
 The task is complete only when committed on your branch.
 When you believe it is complete, append \`done [at=<epoch>]: {summary}\` to the status file and stop.
-Firstmate will then instruct you to run /no-mistakes to validate.
-That first \`done:\` is the handoff that starts the pipeline; it is not a request to publish.
+Firstmate examines the return. It may instruct /no-mistakes only after explicit task-scoped user authorization is recorded. This return and the delivery mode grant no pipeline or publication permission.
 
 EOF
       fm_nm_driving_block "$forge"
@@ -516,8 +516,7 @@ Delivery contract: mode=no-mistakes$contract_forge$contract_consent
 Ship branch: $branch
 The task is complete only when committed on your branch.
 When you believe it is complete, append \`done [at=<epoch>]: {summary}\` to the status file and stop.
-Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
-That first \`done:\` is the handoff that starts the pipeline, which owns the push; it is not a request to push from this copy.
+Firstmate examines the return. A delivery preference or this return never authorizes /no-mistakes. Firstmate may instruct an applicable run only after explicit task-scoped user authorization is recorded. Publication also requires its own applicable authority.
 ${nm_base}
 EOF
       fm_nm_driving_block "$forge"
@@ -718,7 +717,13 @@ fm_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
 # pr_head=, and the merge-notified marker; <meta> may be a captured copy
 # (bin/fm-fleet-snapshot.sh), so the marker is read from <state>.
 fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state> <id> <meta>]
-  local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha gerrit
+  local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha gerrit mdd_check
+  if [ -n "$meta" ] && [ -n "$(fm_dod_meta_value "$meta" mdd_state)" ]; then
+    if ! mdd_check=$(node "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-mdd-lib.mjs" delivery-check "$meta" 2>&1); then
+      printf '%s\n' "$mdd_check"
+      return 1
+    fi
+  fi
   fm_dod_should_gate_ship_done "$kind" "$mode" "$line" || return 0
   if url=$(fm_dod_pr_url_from_done_note "$(status_line_note "$line")") \
     && fm_dod_recorded_pr_on_forge "$state" "$id" "$meta" "$mode" "$url"; then
@@ -758,4 +763,12 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
   fi
   printf '%s\n' "named head $sha is unreachable outside the worker copy"
   return 1
+}
+
+# Mission workers return evidence. Delivery remains a separate coordinator act.
+fm_dod_mdd_block() {
+  cat <<'EOF'
+# Definition of done
+This MDD assignment ends with a complete report and evidence for FirstMate. Report `done: candidate ready for examination` when your bounded work returns. This is not packet acceptance, mission completion or delivery. Never publish, run No-Mistakes, merge or clean up as a consequence of this return. Follow the frozen skill's packet and validation rules. A reviewer examines the existing work in a fresh context and does not implement corrections.
+EOF
 }

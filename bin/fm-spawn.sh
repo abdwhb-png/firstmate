@@ -1,9 +1,22 @@
 #!/usr/bin/env bash
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
-# Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
+# Usage: fm-spawn.sh <task-id> <project-dir> --prepare --mdd-state <relative-state-path> --mdd-skill <external-skill-dir> --mode <mode> --yolo <on|off>
+#        fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        fm-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] [--herdr-resume-lock-wait]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
+#   --prepare creates one isolated Git worktree and a prepared task without
+#   a runtime endpoint. Author MDD artifacts directly in that worktree, then use
+#   fm-control assign/start. Node >=24 is required. --mdd-state is relative to
+#   the worktree. --mdd-skill supplies a complete external distribution.
+#   Project .agents/skills/mission-driven-dev, .claude/skills/mission-driven-dev
+#   and .pi/skills/mission-driven-dev take priority. Different project bundles
+#   are ambiguous and refuse. The qualified bundle is copied to task data and
+#   pinned by a full file digest, so later source changes do not alter a mission.
+#   The first MDD launch currently supports tmux only; no harness is launched
+#   by preparation itself. Preparation does not copy the project's dirty files.
+#   Existing task data refuses reuse, preserving older evidence and preventing
+#   an older launcher from finding a legacy brief for this new mission.
 #   --mode and --yolo are this task's delivery contract, REQUIRED for every ship
 #   spawn and refused on --scout and --secondmate spawns. Firstmate resolves both
 #   per task at intake (AGENTS.md section 7); data/projects.md holds the captain's
@@ -735,6 +748,11 @@ UPSTREAM_CONSENT=
 UPSTREAM_CONSENT_SET=0
 TRACEPARENT_SET=0
 RELAUNCH=0
+PREPARE=0
+RELAUNCH_PREPARED=0
+MDD_TASK=0
+MDD_STATE=
+MDD_SKILL=
 # Opt-in only: exact-resume presentation-order lock waits instead of refusing.
 # Absent/unset keeps upstream refuse-on-contention. See header.
 HERDR_RESUME_LOCK_WAIT=0
@@ -749,6 +767,8 @@ for a in "$@"; do
       ;;
     esac
     case "$want_value" in
+    mdd-state) MDD_STATE=$a ;;
+    mdd-skill) MDD_SKILL=$a ;;
     harness)
       HARNESS_ARG=$a
       HARNESS_SET=1
@@ -806,6 +826,9 @@ for a in "$@"; do
     KIND=secondmate
     KIND_SET=1
     ;;
+  --prepare) PREPARE=1 ;;
+  --mdd-state) want_value=mdd-state ;;
+  --mdd-skill) want_value=mdd-skill ;;
   --relaunch) RELAUNCH=1 ;;
   --herdr-resume-lock-wait) HERDR_RESUME_LOCK_WAIT=1 ;;
   --harness) want_value=harness ;;
@@ -1584,6 +1607,15 @@ spawn_herdr_presentation_order_lock_release() {
   fm_lock_release "$HERDR_PRESENTATION_ORDER_LOCK" || true
 }
 
+# Preparation is one local ship task. Refuse before batch or remote dispatch,
+# whose child command cannot silently drop a preparation-only contract.
+if [ "$PREPARE" = 1 ]; then
+  [ "$RELAUNCH" = 0 ] && [ "$KIND" = ship ] && [ "${#POS[@]}" = 2 ] \
+    && [[ "${POS[0]}" != *=* ]] || {
+      echo "error: --prepare requires one ship task and project" >&2; exit 1;
+    }
+fi
+
 # Batch dispatch (see header): when the first positional is an `id=repo` pair, treat every
 # positional as one and spawn each by re-execing this script in single-task mode. We use
 # the FM_ROOT path (not $0) so it works whatever cwd or relative path invoked us, and reuse
@@ -1803,6 +1835,63 @@ if [ "$KIND" = secondmate ]; then
   fi
   [ "$remote_spawn_rc" -eq 3 ] || exit "$remote_spawn_rc"
 fi
+# Preparation owns only a Git worktree and durable task data. It does not
+# consult runtime providers or create a terminal. Launch later through control.
+if [ "$PREPARE" = 1 ]; then
+  [ -n "$MDD_STATE" ] && [ -n "$MDD_SKILL" ] || {
+    echo "error: --prepare requires --mdd-state and --mdd-skill" >&2; exit 1;
+  }
+  case "$MDD_STATE" in /*|../*|*/../*|*/..) echo "error: --mdd-state must be inside the mission worktree" >&2; exit 1 ;; esac
+  command -v node >/dev/null 2>&1 || { echo "error: MDD preparation requires Node >=24" >&2; exit 1; }
+  if [ -z "$HARNESS_ARG" ]; then
+    [ ! -f "$CONFIG/crew-dispatch.json" ] || { echo "error: crew dispatch rules require an explicitly resolved --harness" >&2; exit 1; }
+    HARNESS_ARG=$("$FM_ROOT/bin/fm-harness.sh" crew) || exit 1
+  fi
+  [ -n "$BACKEND_ARG" ] || BACKEND_ARG=$(fm_backend_name)
+  fm_backend_validate_spawn "$BACKEND_ARG" || exit 1
+  for field in "$MDD_STATE" "$MDD_SKILL" "$HARNESS_ARG" "$BACKEND_ARG" "$MODEL" "$EFFORT" "${POS[1]}"; do
+    case "$field" in *$'\n'*|*$'\r'*) echo "error: preparation fields must be single-line values" >&2; exit 1 ;; esac
+  done
+  SPAWN_TASK_LOCK="$STATE/.spawn-$ID.lock"
+  fm_lock_try_acquire "$SPAWN_TASK_LOCK" || { echo "error: task $ID is already being prepared" >&2; exit 1; }
+  SPAWN_TASK_LOCK_HELD=1
+  [ ! -e "$STATE/$ID.meta" ] || { echo "error: task $ID already exists" >&2; exit 1; }
+  if [ -e "$DATA/$ID" ] || [ -L "$DATA/$ID" ]; then
+    echo "error: task data already exists for $ID; preserve it and choose a new mission id or reconcile preparation" >&2
+    exit 1
+  fi
+  PROJ_ABS=$(cd -- "${POS[1]}" && pwd -P) || exit 1
+  base=${BASE_BRANCH:-HEAD}
+  git -C "$PROJ_ABS" rev-parse --verify "$base^{commit}" >/dev/null
+  SPAWN_TREEHOUSE_PROJECT_LOCK=$(fm_treehouse_project_lock_path "$PROJ_ABS") || exit 1
+  fm_lock_try_acquire "$SPAWN_TREEHOUSE_PROJECT_LOCK" || { echo "error: project allocation is busy" >&2; exit 1; }
+  SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=1
+  SPAWN_CAPACITY_CONFIG=$(fm_project_capacity_config_dir "$FM_HOME" "$CONFIG") || exit 1
+  fm_project_capacity_lookup "$SPAWN_CAPACITY_CONFIG" "$(basename "$PROJ_ABS")" || exit 1
+  if [ -n "$FM_PROJECT_CAPACITY" ]; then
+    fm_project_capacity_occupants "$SPAWN_TREEHOUSE_PROJECT_LOCK" "$PROJ_ABS" "$STATE" "$ID" || exit 1
+    [ "$FM_PROJECT_CAPACITY_OCCUPANTS" -lt "$FM_PROJECT_CAPACITY" ] || exit "$FM_PROJECT_CAPACITY_DEFER_EXIT"
+  fi
+  node "$SCRIPT_DIR/fm-mdd-lib.mjs" pin "$MDD_SKILL" "$DATA/$ID" "$PROJ_ABS" || exit 1
+  WT="$DATA/$ID/worktree"
+  git -C "$PROJ_ABS" worktree add -b "$BRANCH" "$WT" "$base" || exit 1
+  SPAWN_META_LOCK=$(fm_meta_lock_path "$STATE/$ID.meta") || exit 1
+  fm_lock_acquire_wait "$SPAWN_META_LOCK"
+  SPAWN_META_LOCK_HELD=1
+  SPAWN_META_TMP=$(mktemp "$STATE/.$ID.prepare.XXXXXX")
+  {
+    printf 'lifecycle=prepared\nkind=ship\nproject=%s\nworktree=%s\nbranch=%s\n' "$PROJ_ABS" "$WT" "$BRANCH"
+    printf 'mode=%s\nyolo=%s\nbase_branch=%s\nupstream_consent=%s\n' "$MODE" "$YOLO" "$BASE_BRANCH" "$UPSTREAM_CONSENT"
+    printf 'backend=%s\nharness=%s\nmodel=%s\neffort=%s\n' "$BACKEND_ARG" "$HARNESS_ARG" "${MODEL:-default}" "${EFFORT:-default}"
+    printf 'mdd_state=%s\nmdd_data=%s\n' "$MDD_STATE" "$DATA/$ID"
+  } > "$SPAWN_META_TMP"
+  fm_backlog_atomic_transition publish "$SPAWN_META_TMP" "$STATE/$ID.meta" "prepared mission" "$STATE" || exit 1
+  SPAWN_META_TMP=
+  printf 'prepared %s worktree=%s\n' "$ID" "$WT"
+  exit 0
+fi
+[ -z "$MDD_STATE$MDD_SKILL" ] || { echo "error: MDD binding options require --prepare" >&2; exit 1; }
+
 # Backend selection (data/fm-backend-design-d7): explicit --backend, else
 # FM_BACKEND env, else config/backend, else runtime auto-detection, else
 # default tmux (fm_backend_name). fm_backend_validate_spawn refuses unknown or
@@ -1871,6 +1960,20 @@ if [ "$RELAUNCH" -eq 1 ]; then
     echo "error: --relaunch refused after locking: $FM_BACKLOG_TRANSITION_ERROR" >&2
     exit 1
   }
+  if [ -n "$(fm_meta_get "$RELAUNCH_META" mdd_state)" ]; then
+    MDD_TASK=1
+    [ "$SPAWN_CONTROL_PARENT" = 1 ] || { echo "error: launch MDD work through fm-control start" >&2; exit 1; }
+    node "$SCRIPT_DIR/fm-mdd-lib.mjs" dispatch-check "$RELAUNCH_META" >/dev/null || exit 1
+  fi
+  if [ "$MDD_TASK" = 1 ] && [ "$(fm_meta_get "$RELAUNCH_META" lifecycle)" = prepared ] \
+    && [ -z "$(fm_meta_get "$RELAUNCH_META" spawn_gen)" ]; then
+    RELAUNCH_PREPARED=1
+    BACKEND=$(fm_meta_get "$RELAUNCH_META" backend)
+    [ "$BACKEND" = tmux ] || { echo "error: prepared mission launch currently supports tmux only" >&2; exit 1; }
+    fm_backend_validate_spawn "$BACKEND" || exit 1
+    fm_backend_source "$BACKEND" || exit 1
+    RELAUNCH_TARGET=
+  else
   fm_backend_validate_task_endpoint "$RELAUNCH_META" "$ID" || exit 1
   BACKEND=$FM_BACKEND_VALIDATED_BACKEND
   RELAUNCH_TARGET=$FM_BACKEND_VALIDATED_TARGET
@@ -1933,6 +2036,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
       exit 1
       ;;
   esac
+  fi
   RELAUNCH_PRIOR_HARNESS=$(fm_meta_get "$RELAUNCH_META" harness)
   KIND=$(fm_meta_get "$RELAUNCH_META" kind)
   [ -n "$KIND" ] || KIND=ship
@@ -2739,6 +2843,7 @@ muse_credential_present() {
 # property; it preserves a display and supervision signal.
 relaunch_resume_args() {  # <harness> <backend> <target>
   local harness=${1-} backend=${2-} target=${3-} identity agent ref flag
+  [ "$MDD_TASK" = 0 ] || return 0
   [ "$backend" = herdr ] || return 0
   [ -n "$target" ] || return 0
   fm_backend_herdr_parse_target "$target" || return 0
@@ -3240,11 +3345,15 @@ if [ -n "$SPAWN_PROJECT_CAPACITY" ]; then
     exit "$FM_PROJECT_CAPACITY_DEFER_EXIT"
   fi
 fi
+if [ "$MDD_TASK" = 1 ]; then
+  BRIEF=$(fm_meta_get "$RELAUNCH_META" mdd_brief)
+fi
 [ -f "$BRIEF" ] || {
   echo "error: task $ID has no brief at inaccessible data path $BRIEF" >&2
   exit 1
 }
 if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
+  if [ "$MDD_TASK" = 0 ]; then
   if fm_brief_task_placeholders_present "$BRIEF"; then
     echo "error: $BRIEF still contains {TASK} or {FIRSTMATE_SPEC}; fill ## Captain's intent and ## Firstmate spec before spawn" >&2
     exit 1
@@ -3286,6 +3395,7 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
     echo "error: $BRIEF records a Base branch line but the spawn has no --base-branch; pass the brief's base with --base-branch or re-scaffold the brief without one" >&2
     exit 1
   fi
+  fi
   # Use the existing launch-brief overlay for every worker kind, including
   # pre-scope briefs and relaunches. Charters never enter this worker path.
   SOURCE_BRIEF=$BRIEF
@@ -3295,7 +3405,9 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
     fm_brief_worker_role "$STATE" "$ID" "$FM_ROOT" &&
       printf '\n' &&
       cat "$SOURCE_BRIEF" &&
-      if [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
+      if [ "$MDD_TASK" = 1 ]; then
+        fm_dod_mdd_block
+      elif [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
         fm_brief_intent_overlay "$CAPTAIN_INTENT"
       fi
   } >"$BRIEF_TMP" || {
@@ -3324,7 +3436,7 @@ delivery_rigor_rank() { # <mode> -> 3 (most rigor) .. 1 (least); 0 = not a task 
 # line, with " forge=<forge>" appended on a bound forge. A spawn that disagrees
 # would launch a worker whose instructions and whose recorded task delivery
 # differ, which is the exact drift this contract prevents.
-if [ "$KIND" = ship ]; then
+if [ "$KIND" = ship ] && [ "$MDD_TASK" = 0 ]; then
   PROJ_NAME=$(basename "$PROJ_ABS")
   # The parser's own refusal reaches the operator here rather than being
   # discarded: an entry it refuses (an unknown forge token, or a forge on
@@ -3789,7 +3901,11 @@ if [ "$RELAUNCH" -eq 1 ]; then
   # uncommitted changes are exactly as the previous agent left them, and nothing
   # below may touch them.
   [ "$KIND" = secondmate ] || WT=$RELAUNCH_WT
-  if [ "$RELAUNCH_REBIND" -eq 0 ]; then
+  if [ "$RELAUNCH_PREPARED" = 1 ]; then
+    SES=$(fm_backend_tmux_container_ensure)
+    T="$SES:$W"
+    WT_TARGET=$(fm_backend_tmux_create_task "$SES" "$W" "$WT") || exit 1
+  elif [ "$RELAUNCH_REBIND" -eq 0 ]; then
     # Adopt the recorded endpoint instead of creating one. This is what keeps a
     # relaunch a REPLACEMENT rather than a second copy of the task: no new
     # terminal, no second worktree, and every uncommitted change left exactly
@@ -5266,7 +5382,7 @@ SPAWN_META_PATH=$SPAWN_META_TMP
 preserve_relaunch_meta() {
   awk -F= '
     BEGIN {
-      split("window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch upstream_consent model effort account account_provider busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
+      split("lifecycle stopped_gen window endpoint_task_id worktree project harness kind mode yolo branch tasktmp base_branch upstream_consent model effort account account_provider busy_gen spawn_gen traceparent backend herdr_session herdr_workspace_id herdr_tab_id herdr_pane_id zellij_session zellij_tab_id zellij_pane_id orca_worktree_id terminal cmux_workspace_id cmux_surface_id home projects control_relaunch_tx", keys, " ")
       for (i in keys) owned[keys[i]] = 1
     }
     !($1 in owned)
@@ -5293,6 +5409,7 @@ preserve_relaunch_meta() {
   [ -z "$WORKER_ACCOUNT_PROVIDER" ] || echo "account_provider=$WORKER_ACCOUNT_PROVIDER"
   [ -z "${BUSY_GEN:-}" ] || echo "busy_gen=$BUSY_GEN"
   echo "spawn_gen=$SPAWN_GEN"
+  [ "$MDD_TASK" = 0 ] || echo "lifecycle=running"
   # Default-off writes no traceparent= line.
   # backend= is written only for a non-default (non-tmux) backend, so the
   # default path's meta stays byte-identical (absent backend= means tmux;
@@ -5396,6 +5513,10 @@ if [ "$RELAUNCH" -eq 1 ]; then
   RELAUNCH_REPLACEMENT_PENDING=0
   SPAWN_META_PUBLISH_STARTED=0
   SPAWN_META_TMP=
+fi
+if [ "$MDD_TASK" = 1 ]; then
+  node "$SCRIPT_DIR/fm-mdd-lib.mjs" dispatch-check "$STATE/$ID.meta" >/dev/null || exit 1
+  printf '\nExecution identity: %s:%s\n' "$ID" "$SPAWN_GEN" >> "$BRIEF" || exit 1
 fi
 # A dispatch or relaunch keeps the per-task meta lock through launch delivery.
 # The backlog mutation is deliberately the final fallible commit below, so

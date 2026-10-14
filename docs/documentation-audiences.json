@@ -583,6 +583,14 @@
     {
       "path": ".agents/skills/validation-supervision/SKILL.md",
       "audience": "agent-runtime"
+    },
+    {
+      "path": "docs/design/fork-mdd.md",
+      "audience": "maintainer-architecture"
+    },
+    {
+      "path": "docs/verification/fork-mdd.md",
+      "audience": "maintainer-verification"
     }
   ]
 }

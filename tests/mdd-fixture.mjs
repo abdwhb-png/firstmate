@@ -1,0 +1,20 @@
+// Qualified external example, made executable only inside a disposable repo.
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+const [bundle, wt] = process.argv.slice(2);
+fs.cpSync(path.join(bundle, 'assets/example'), wt, { recursive: true });
+const dir = path.join(wt, '.missions/example');
+const statePath = path.join(dir, 'state.json');
+const state = JSON.parse(fs.readFileSync(statePath));
+const first = JSON.parse(fs.readFileSync(path.join(dir, 'history.jsonl'), 'utf8').trim());
+state.status = 'executing'; state.executionMode = 'coordinated'; state.revision = 3; state.lastSequence = 3;
+state.currentPacket = { kind: 'packet', id: 'example-attempt-1', revision: 1, path: 'packet-r1.md' };
+state.attempts = [{ packet: state.currentPacket, result: null }];
+state.evidence = [{ kind: 'evidence', path: 'authority.md' }];
+fs.writeFileSync(path.join(dir, 'authority.md'), 'Fixture authorization: coordinated implementation and independent reviews in this mission only. No publication or No-Mistakes.');
+fs.writeFileSync(path.join(dir, 'handoff.md'), '# Task\n## Captain\'s intent\nExecute fixture packet.\n## Firstmate spec\nFollow the current MDD assignment.\n');
+const packet = path.join(dir, 'packet-r1.md');
+fs.writeFileSync(packet, fs.readFileSync(packet, 'utf8').replace('0'.repeat(40), execFileSync('git', ['-C', wt, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()));
+fs.writeFileSync(statePath, JSON.stringify(state));
+fs.writeFileSync(path.join(dir, 'history.jsonl'), [first, ...['ready', 'executing'].map((status, i) => ({ ...first, sequence: i + 2, stateRevision: i + 2, status, evidence: state.evidence }))].map(row => JSON.stringify(row)).join('\n')+'\n');

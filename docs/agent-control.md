@@ -1,5 +1,7 @@
 # Agent lifecycle control plane
 
+MDD tasks add assignment, candidate, examination and authorization operations to this same control owner. The [fork design](design/fork-mdd.md) owns their lifecycle and boundaries; [fm-control](../bin/fm-control.sh) owns their command contract. Dedicated review replaces the stopped implementer in the same task, using a new execution identity and current immutable handoff.
+
 Firstmate talks to a running agent two ways, and they are not the same channel.
 
 The **data plane** is [`bin/fm-send.sh`](../bin/fm-send.sh): conversational text for the agent to read.
@@ -15,7 +17,7 @@ The failure repeated across harnesses and homes, and the workaround (remember to
 
 `bin/fm-control-lib.sh` is the single executable owner of three capability tables, which have no side effects, so they can be read as a contract:
 
-- The **verb allowlist**: `interrupt`, `exit`, `relaunch`.
+- The **verb allowlist**, including lifecycle control and MDD operations, is defined by `fm_control_verbs` in the control library.
   There is no arbitrary-text and no generic raw-key entry point.
   A caller either names an allowlisted verb or is refused.
 - **Per-harness mechanics**: the key that cancels a running turn, how many times it must be delivered, whether the composer needs clearing afterwards, the command that exits the agent, and which task kinds the adapter is verified to run.

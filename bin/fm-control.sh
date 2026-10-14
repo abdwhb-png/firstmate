@@ -2,7 +2,23 @@
 # fm-control.sh - the CONTROL PLANE for a firstmate-owned agent: allowlisted
 # lifecycle verbs addressed to an exact task id.
 #
-# Usage: fm-control.sh <task-id> interrupt
+# Usage: fm-control.sh <task-id> assign --role <implementer|reviewer|final-reviewer> --brief-file <handoff> --authority <existing-evidence>
+#        fm-control.sh <task-id> start
+#        fm-control.sh <task-id> candidate --report <file> --complete
+#        fm-control.sh <task-id> accept --result <MDD-result>
+#        fm-control.sh <task-id> authorize --action <delivery|no-mistakes> --authority <evidence>
+#        fm-control.sh <task-id> action-check --action <delivery|no-mistakes>
+#
+# MDD: assign publishes an immutable handoff with metadata under the task lock.
+# A live implementer receives its next packet through fm-send; reviewer roles
+# first confirm exit. start launches the current handoff after real bundle CLI
+# validation. candidate records the complete terminal report actually received,
+# never a progress fragment. accept links the MDD verdict to that execution and
+# worktree contents. authorize records an explicit user grant referenced by its
+# evidence, not inferred from a delivery mode. action-check revalidates it before
+# the managed action. These commands do not edit MDD state/history, run a
+# pipeline, publish, or clean up. The coordinator owns those authorized steps.
+#        fm-control.sh <task-id> interrupt
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
 #                                         [--effort <level>]
@@ -251,6 +267,13 @@ MODEL_SET=0
 EFFORT_SET=0
 NOTE=
 NOTE_SET=0
+MDD_ROLE=
+MDD_BRIEF=
+MDD_AUTHORITY=
+MDD_REPORT=
+MDD_RESULT=
+MDD_ACTION=
+MDD_COMPLETE=0
 control_want_value=
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
@@ -258,6 +281,12 @@ for control_arg in "$@"; do
       --*) die "--$control_want_value requires a value" ;;
     esac
     case "$control_want_value" in
+      action) MDD_ACTION=$control_arg ;;
+      report) MDD_REPORT=$control_arg ;;
+      result) MDD_RESULT=$control_arg ;;
+      role) MDD_ROLE=$control_arg ;;
+      brief-file) MDD_BRIEF=$control_arg ;;
+      authority) MDD_AUTHORITY=$control_arg ;;
       harness) NEW_HARNESS=$control_arg; HARNESS_SET=1 ;;
       model) NEW_MODEL=$control_arg; MODEL_SET=1 ;;
       effort) NEW_EFFORT=$control_arg; EFFORT_SET=1 ;;
@@ -272,6 +301,13 @@ for control_arg in "$@"; do
     continue
   fi
   case "$control_arg" in
+    --action) control_want_value=action ;;
+    --complete) MDD_COMPLETE=1 ;;
+    --report) control_want_value=report ;;
+    --result) control_want_value=result ;;
+    --role) control_want_value=role ;;
+    --brief-file) control_want_value=brief-file ;;
+    --authority) control_want_value=authority ;;
     --harness) control_want_value=harness ;;
     --harness=*) NEW_HARNESS=${control_arg#--harness=}; HARNESS_SET=1 ;;
     --model) control_want_value=model ;;
@@ -356,9 +392,16 @@ if [ -n "$(fm_meta_get "$META" remote_host)" ]; then
   die "task $ID is a remotely placed secondmate on $(fm_meta_get "$META" remote_host); its agent runs outside this home, so no lifecycle action here could verify that it interrupted, stopped, or came back. Drive its lifecycle on that host, and reconcile it through the secondmate recovery path rather than this plane"
 fi
 
-fm_backend_validate_task_endpoint "$META" "$ID" || exit 1
-BACKEND=$FM_BACKEND_VALIDATED_BACKEND
-T=$FM_BACKEND_VALIDATED_TARGET
+PREPARED=0
+if [ "$(fm_meta_get "$META" lifecycle)" = prepared ] && [ -z "$(fm_meta_get "$META" spawn_gen)" ]; then
+  PREPARED=1
+  BACKEND=$(fm_meta_get "$META" backend)
+  T=
+else
+  fm_backend_validate_task_endpoint "$META" "$ID" || exit 1
+  BACKEND=$FM_BACKEND_VALIDATED_BACKEND
+  T=$FM_BACKEND_VALIDATED_TARGET
+fi
 LABEL="fm-$ID"
 RECORDED_HARNESS=$(fm_meta_get "$META" harness)
 KIND=$(fm_meta_get "$META" kind)
@@ -372,7 +415,7 @@ HARNESS=$(fm_control_harness_family "$RECORDED_HARNESS") \
 fm_control_harness_supported "$HARNESS" \
   || die "task $ID records harness '${RECORDED_HARNESS:-none}', which has no verified control mechanics; fm-control refuses to guess an interrupt key or exit command"
 
-fm_backend_validate "$BACKEND" || exit 1
+[ "$PREPARED" = 1 ] || fm_backend_validate "$BACKEND" || exit 1
 
 # --- shared helpers ---------------------------------------------------------
 
@@ -1193,9 +1236,90 @@ do_relaunch() {
   echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT"
 }
 
+# MDD assignments use immutable briefs referenced by metadata. A failed
+# publication cannot mix an old record with new instructions. This is execution
+# provenance only; the mission's existing state/history remain MDD-owned.
+do_assign() {
+  local lock tmp
+  [ -n "$MDD_ROLE" ] && [ -n "$MDD_BRIEF" ] && [ -n "$MDD_AUTHORITY" ] || die "assign needs --role, --brief-file and --authority"
+  node "$SCRIPT_DIR/fm-mdd-lib.mjs" validate "$META" >/dev/null || return 1
+  case "$MDD_ROLE" in
+    reviewer|final-reviewer)
+      [ "$PREPARED" = 1 ] || do_exit >/dev/null || return 1
+      ;;
+    implementer) ;;
+    *) die "unsupported MDD assignment role" ;;
+  esac
+  lock=$(fm_meta_lock_path "$META") || return 1
+  fm_lock_acquire_wait "$lock" || return 1
+  tmp=$(mktemp "$STATE/.$ID.assignment.XXXXXX") || { fm_lock_release "$lock"; return 1; }
+  if ! node "$SCRIPT_DIR/fm-mdd-lib.mjs" assignment "$META" "$MDD_ROLE" "$MDD_BRIEF" "$MDD_AUTHORITY" "$tmp" >/dev/null; then
+    rm -f "$tmp"; fm_lock_release "$lock"; return 1
+  fi
+  # shellcheck source=bin/fm-tasks-axi-lib.sh
+  . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
+  # shellcheck source=bin/fm-backlog-transition-lib.sh
+  . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
+  if ! fm_backlog_atomic_transition publish "$tmp" "$META" "mission assignment" "$STATE"; then
+    rm -f "$tmp"; fm_lock_release "$lock"; return 1
+  fi
+  fm_lock_release "$lock"
+  if [ "$PREPARED" = 0 ] && [ "$MDD_ROLE" = implementer ] && [ "$(agent_state)" = alive ]; then
+    node "$SCRIPT_DIR/fm-mdd-lib.mjs" bind-execution "$META" >/dev/null || return 1
+    "$SCRIPT_DIR/fm-send.sh" "$ID" "New MDD assignment: read $(fm_meta_get "$META" mdd_brief). Follow that current packet and its authority." || return 1
+  fi
+  printf 'assigned %s role=%s brief=%s\n' "$ID" "$MDD_ROLE" "$(fm_meta_get "$META" mdd_brief)"
+}
+
+mdd_start() {
+  local state
+  node "$SCRIPT_DIR/fm-mdd-lib.mjs" dispatch-check "$META" >/dev/null || return 1
+  "$SCRIPT_DIR/fm-spawn.sh" "$ID" --relaunch || return 1
+  fm_backend_validate_task_endpoint "$META" "$ID" || return 1
+  BACKEND=$FM_BACKEND_VALIDATED_BACKEND
+  T=$FM_BACKEND_VALIDATED_TARGET
+  state=$(wait_agent_state "$LAUNCH_WAIT" alive) || die "MDD launch is unconfirmed ($state); preserve records and reconcile"
+  node "$SCRIPT_DIR/fm-mdd-lib.mjs" bind-execution "$META"
+}
+
+# Delaying MDD delivery must not bypass the existing self-repository gate.
+case "$VERB:$MDD_ACTION" in
+  authorize:delivery|action-check:delivery)
+    if [ "$(fm_meta_get "$META" mode)" != local-only ]; then
+      # shellcheck source=bin/fm-role-lib.sh
+      . "$SCRIPT_DIR/fm-role-lib.sh"
+      mdd_publication_rc=0
+      fm_role_gate_self_publish "$FM_HOME" "${FM_CONFIG_OVERRIDE:-$FM_HOME/config}" "$(fm_meta_get "$META" project)" "$FM_ROOT" "$(fm_meta_get "$META" upstream_consent)" || mdd_publication_rc=$?
+      case "$mdd_publication_rc" in
+        0|2) ;;
+        *) die "MDD publication refused: $FM_ROLE_PUB_DENIAL" ;;
+      esac
+    fi
+    ;;
+esac
+
 # --- verbs ------------------------------------------------------------------
 
 case "$VERB" in
+  assign) do_assign ;;
+  start) mdd_start ;;
+  action-check)
+    [ -n "$MDD_ACTION" ] || die "action-check needs --action"
+    node "$SCRIPT_DIR/fm-mdd-lib.mjs" action-check "$META" "$MDD_ACTION"
+    ;;
+  authorize)
+    [ -n "$MDD_ACTION" ] && [ -n "$MDD_AUTHORITY" ] || die "authorize needs --action and --authority"
+    node "$SCRIPT_DIR/fm-mdd-lib.mjs" authorize "$META" "$MDD_ACTION" "$MDD_AUTHORITY"
+    ;;
+  candidate)
+    [ "$MDD_COMPLETE" = 1 ] && [ -n "$MDD_REPORT" ] || die "candidate needs --report and --complete after receiving the full terminal report"
+    case "$(busy_verdict)" in busy*) die "agent is still working; report is not terminal" ;; esac
+    node "$SCRIPT_DIR/fm-mdd-lib.mjs" candidate "$META" "$MDD_REPORT" --complete
+    ;;
+  accept)
+    [ -n "$MDD_RESULT" ] || die "accept needs --result"
+    node "$SCRIPT_DIR/fm-mdd-lib.mjs" accept "$META" "$MDD_RESULT"
+    ;;
   interrupt)
     state=$(agent_state)
     case "$state" in
@@ -1217,6 +1341,13 @@ case "$VERB" in
     echo "$result $ID harness=$HARNESS backend=$BACKEND endpoint=$T worktree=$WT"
     ;;
   relaunch)
-    do_relaunch
+    if [ -n "$(fm_meta_get "$META" mdd_state)" ]; then
+      [ "$NOTE_SET$HARNESS_SET$MODEL_SET$EFFORT_SET" = 0000 ] || die "MDD replacements use the current frozen handoff; assign changed instructions explicitly"
+      node "$SCRIPT_DIR/fm-mdd-lib.mjs" dispatch-check "$META" >/dev/null || exit 1
+      [ "$PREPARED" = 1 ] || do_exit >/dev/null || exit 1
+      mdd_start
+    else
+      do_relaunch
+    fi
     ;;
 esac

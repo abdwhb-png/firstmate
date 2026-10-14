@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, '*\+fork-*']
   pull_request:
-    branches: [main]
+    branches: [main, '*\+fork-*']
 
 permissions:
   contents: read
@@ -85,6 +85,29 @@ jobs:
       - uses: actions/checkout@v6
       - name: Prove complete regression partition
         run: bin/fm-test-run.sh --check-coverage
+
+  tests-mdd:
+    name: Qualified external MDD interface
+    runs-on: ubuntu-latest
+    # Fast tier: real CLI qualification plus simulated agent lifecycle.
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/checkout@v6
+        with:
+          repository: abdwhb-png/agent-tools
+          ref: 71a3d3570d5dd04992f16dfff617bb31090d7732
+          path: .qualification/agent-tools
+      - name: Qualify the real external bundle
+        env:
+          FM_TEST_MDD_BUNDLE: ${{ github.workspace }}/.qualification/agent-tools/skills/mission-driven-dev
+        run: |
+          set -eu
+          bin/fm-test-run.sh tests/fm-mdd.test.sh
+          FM_TEST_ONLY=test_mdd_prepared_start_and_fresh_reviewer bin/fm-test-run.sh tests/fm-control-relaunch.test.sh
 
   # Two duration-balanced portable parallel shards of the Phase 2 proven-isolated
   # set only. Composition owner: bin/fm-test-run.sh (docs/fm-test-portable-shards.md).
