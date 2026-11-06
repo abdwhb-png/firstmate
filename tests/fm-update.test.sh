@@ -25,6 +25,11 @@
 #   - Secondmate homes resolve from both state/<id>.meta and the
 #     data/secondmates.md registry, deduped, and the firstmate repo is never
 #     re-processed as one of its own secondmates.
+#   - An optional config/self-update-source moves the primary to that one remote
+#     branch instead of origin, under the same fast-forward guards, and local
+#     secondmates (linked worktree or standalone clone) follow the primary's
+#     resulting commit; an unusable file refuses the whole update before
+#     anything moves rather than falling back to origin.
 set -u
 
 # shellcheck source=tests/lib.sh
@@ -581,7 +586,9 @@ test_pinned_release_keeps_primary_and_syncs_exact_commit() {
   # Ignore private data exactly as real homes do.
   printf 'data/\n' >> "$w/main/.git/info/exclude"
   bump_origin "$w" instr
-  out=$(run_update "$w")
+  mkdir -p "$w/home/config"
+  printf 'missing-remote carry\n' > "$w/home/config/self-update-source"
+  out=$(run_update "$w") || fail "pinned update read the optional source: $out"
   [ "$(git -C "$w/main" symbolic-ref --short HEAD)" = "$branch" ] || fail 'update switched installed release'
   [ "$(git -C "$w/main" rev-parse HEAD)" = "$pin" ] || fail 'update moved frozen release'
   [ "$(git -C "$w/sm1" rev-parse HEAD)" = "$pin" ] || fail "secondmate followed main instead of installed commit: $out"
@@ -599,11 +606,172 @@ test_pinned_release_keeps_primary_and_syncs_exact_commit() {
   [ "$(cat "$w/sm1/data/private")" = 'private evidence' ] || fail 'rollback changed private data'
   pass 'pinned versions sync exact commits, retain private data and expose rollback reconciliation'
 }
+
+test_exact_release_refuses_redundant_divergence() {
+  local w branch pin mate before out remote_rc=0
+  w=$(new_world redundant-pinned)
+  add_sm "$w" sm1
+  mate="$w/sm1"
+  branch="$(git -C "$w/main" rev-parse --short=12 HEAD)+fork-3"
+  git -C "$w/main" switch -qc "$branch"
+  printf 'equivalent change\n' >> "$w/main/AGENTS.md"
+  git -C "$w/main" commit -qam release
+  pin=$(git -C "$w/main" rev-parse HEAD)
+  git -C "$mate" cherry-pick --no-commit "$pin"
+  git -C "$mate" commit -qm local-copy
+  before=$(git -C "$mate" rev-parse HEAD)
+  mkdir -p "$mate/state"
+  printf 'sm1\n' > "$mate/.fm-secondmate-home"
+  printf '.fm-secondmate-home\nstate/\n' >> "$w/main/.git/info/exclude"
+
+  # The host's ordinary code checkout may be behind the pinned parent.
+  out=$(FM_HOME="$mate" FM_ROOT_OVERRIDE="$w/seed" \
+    "$ROOT/bin/fm-remote-secondmate-control.sh" sync sm1 "$pin" 2>&1) || remote_rc=$?
+  assert_equals 1 "$remote_rc" 'explicit remote sync rewrote a redundant local commit'
+  assert_contains "$out" 'reconciliation required' 'remote sync did not explain the refusal'
+  assert_equals "$before" "$(git -C "$mate" rev-parse HEAD)" 'remote sync moved the secondmate'
+
+  out=$(run_update "$w") || fail "pinned update failed to report divergent home: $out"
+  assert_contains "$out" 'reconciliation required' 'pinned update did not explain the refusal'
+  assert_equals "$before" "$(git -C "$mate" rev-parse HEAD)" 'pinned update moved the secondmate'
+  pass 'local and remote exact release sync preserve redundant divergent commits'
+}
+# --- self-update source helpers -------------------------------------------
+
+# Add a standalone-clone secondmate home (its own object store, unlike add_sm's
+# linked worktree), plus its state meta. Args: world id.
+add_standalone_sm() {
+  local w=$1 id=$2
+  git clone -q "$w/origin.git" "$w/$id"
+  git -C "$w/$id" remote set-head origin main >/dev/null 2>&1 || true
+  {
+    printf 'window=main:fm-%s\n' "$id"
+    printf 'endpoint_task_id=%s\n' "$id"
+    printf 'worktree=%s/%s\n' "$w" "$id"
+    printf 'project=%s/%s\n' "$w" "$id"
+    printf 'kind=secondmate\n'
+    printf 'harness=claude\n'
+    printf 'home=%s/%s\n' "$w" "$id"
+  } > "$w/home/state/$id.meta"
+  printf 'fm-%s\n' "$id" >> "$w/fake/windows"
+  printf '%s\n' "$id" > "$w/$id/.fm-secondmate-home"
+}
+
+# Create a bare fork whose `carry` branch is origin's current main plus one
+# carried commit touching the instruction surface, and add it to the primary
+# as the remote `fork`. Echoes the carry commit.
+add_fork_carry() {
+  local w=$1 carry
+  git init -q --bare "$w/fork.git"
+  git -C "$w/seed" pull -q origin main >/dev/null 2>&1 || true
+  git -C "$w/seed" checkout -q -b carry-work
+  printf 'carried\n' >> "$w/seed/AGENTS.md"
+  printf 'echo carried\n' > "$w/seed/bin/tool.sh"
+  git -C "$w/seed" add -A
+  git -C "$w/seed" commit -qm carried-fix
+  git -C "$w/seed" push -q "$w/fork.git" carry-work:carry
+  carry=$(git -C "$w/seed" rev-parse HEAD)
+  git -C "$w/seed" checkout -q main
+  git -C "$w/main" remote add fork "$w/fork.git"
+  printf '%s\n' "$carry"
+}
+
+write_source() {
+  mkdir -p "$1/home/config"
+  printf '%s\n' "$2" > "$1/home/config/self-update-source"
+}
+
+# --- T13: the primary follows the configured branch; secondmates follow it ---
+test_self_update_source_follows_branch() {
+  local w out carry
+  w=$(new_world t13)
+  add_sm "$w" sm1
+  add_standalone_sm "$w" sm2
+  carry=$(add_fork_carry "$w")
+  # origin also moves, and that commit is NOT in the carry branch, so landing
+  # on it would prove origin was used.
+  bump_origin "$w" readme
+  write_source "$w" "fork carry"
+
+  out=$(run_update "$w")
+
+  assert_contains "$out" "self-update source: fork carry" "the configured source is announced"
+  assert_contains "$out" "firstmate: updated " "the primary advanced"
+  assert_equals "$(git -C "$w/main" rev-parse HEAD)" "$carry" "the primary did not land on the configured branch"
+  [ "$(git -C "$w/main" symbolic-ref --short HEAD 2>/dev/null)" = "main" ] \
+    || fail "the primary left its default branch"
+  assert_equals "$(git -C "$w/sm1" rev-parse HEAD)" "$carry" "a linked-worktree secondmate did not follow the primary"
+  assert_equals "$(git -C "$w/sm2" rev-parse HEAD)" "$carry" "a standalone-clone secondmate did not follow the primary"
+  assert_contains "$out" "reread-firstmate: yes" "the carried instruction change triggers a reread"
+  assert_contains "$out" "fm-sm1" "the linked secondmate is routed for restart"
+  assert_contains "$out" "fm-sm2" "the standalone secondmate is routed for restart"
+  assert_not_contains "$out" "nudge-secondmates: fm" "restartable mates are not nudged"
+
+  # Removing the file returns to origin; the carried commit is not in origin, so
+  # that path now reports divergence and moves nothing.
+  rm "$w/home/config/self-update-source"
+  out=$(run_update "$w")
+  assert_not_contains "$out" "self-update source:" "an absent file must not announce a source"
+  assert_contains "$out" "firstmate: skipped: diverged from origin/main" "without the file the origin path is used"
+  assert_equals "$(git -C "$w/main" rev-parse HEAD)" "$carry" "the origin path moved a diverged primary"
+  pass "T13 config/self-update-source moves the primary and its local secondmates to that branch"
+}
+
+# --- T14: an unusable config refuses before anything moves ------------------
+test_self_update_source_refuses_unusable_config() {
+  local w before value rc err
+  w=$(new_world t14)
+  add_sm "$w" sm1
+  add_fork_carry "$w" >/dev/null
+  bump_origin "$w" instr
+  before=$(git -C "$w/main" rev-parse HEAD)
+
+  for value in "nosuchremote carry" "fork" "fork carry extra" "fork bad..branch" $'fork carry\nfork other'; do
+    write_source "$w" "$value"
+    err=$(PATH="$w/fakebin:$PATH" FM_FAKE_DIR="$w/fake" \
+      FM_ROOT_OVERRIDE="$w/main" FM_HOME="$w/home" "$UPDATE" 2>&1 >/dev/null)
+    rc=$?
+    [ "$rc" -ne 0 ] || fail "an unusable self-update source ($value) did not refuse"
+    assert_contains "$err" "config/self-update-source" "the refusal ($value) must name the file"
+    assert_equals "$(git -C "$w/main" rev-parse HEAD)" "$before" "the primary moved despite an unusable source ($value)"
+    assert_equals "$(git -C "$w/sm1" rev-parse HEAD)" "$before" "a secondmate moved despite an unusable source ($value)"
+  done
+  pass "T14 an unusable config/self-update-source refuses without falling back to origin"
+}
+
+# --- T15: a rewritten (non-fast-forward) branch is skipped, never forced -------
+test_self_update_source_rewrite_is_skipped() {
+  local w out carry other
+  w=$(new_world t15)
+  add_sm "$w" sm1
+  carry=$(add_fork_carry "$w")
+  write_source "$w" "fork carry"
+  out=$(run_update "$w")
+  assert_equals "$(git -C "$w/main" rev-parse HEAD)" "$carry" "setup: the primary did not reach the branch"
+
+  # Replace the branch with an unrelated line of history.
+  git -C "$w/seed" checkout -q -b rewritten "$carry~1"
+  printf 'other\n' >> "$w/seed/README.md"
+  git -C "$w/seed" add -A
+  git -C "$w/seed" commit -qm rewritten
+  git -C "$w/seed" push -q -f "$w/fork.git" rewritten:carry
+  other=$(git -C "$w/seed" rev-parse HEAD)
+
+  out=$(run_update "$w")
+
+  assert_contains "$out" "firstmate: skipped: diverged from refs/remotes/fork/carry" "a rewritten branch must be skipped"
+  assert_equals "$(git -C "$w/main" rev-parse HEAD)" "$carry" "the primary was moved off its commit"
+  assert_not_equals "$(git -C "$w/main" rev-parse HEAD)" "$other" "the primary was forced to the rewritten branch"
+  assert_contains "$out" "secondmate sm1: already current" "a secondmate stays on the primary's unchanged commit"
+  pass "T15 a non-fast-forward self-update source is skipped, never forced"
+}
+
 if [ -n "${FM_TEST_ONLY:-}" ]; then
   "$FM_TEST_ONLY"
   exit 0
 fi
 test_pinned_release_keeps_primary_and_syncs_exact_commit
+test_exact_release_refuses_redundant_divergence
 
 test_updates_main_and_secondmate
 test_reread_gate_is_instruction_only
@@ -622,5 +790,8 @@ test_firstmate_wrong_branch_skipped
 test_firstmate_detached_head_skipped
 test_unsafe_secondmate_home_skipped_before_git_update
 test_primary_update_rebinds_local_watch
+test_self_update_source_follows_branch
+test_self_update_source_refuses_unusable_config
+test_self_update_source_rewrite_is_skipped
 
 echo "# all fm-update tests passed"

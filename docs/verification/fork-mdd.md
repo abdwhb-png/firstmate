@@ -1,6 +1,15 @@
 # Qualification du fork et du raccordement MDD
 
-Date : 14 octobre 2026. Cible courante : candidate locale `2911a3bb6dd1+fork-2`, issue de `fork-1` au commit `40a6fb771af7f3013a241538080ae8519da84cb2`, base officielle `2911a3bb6dd1b41061fb4dc87738791bf78008f4`. Le [document de conception](../design/fork-mdd.md) possède les décisions et les limites fonctionnelles. Ce document possède les preuves de qualification et les commandes de renouvellement.
+Le [document de conception](../design/fork-mdd.md) décrit les décisions et les limites fonctionnelles. Ce document rassemble les preuves de qualification et les commandes de renouvellement.
+
+## Mise à jour du 6 novembre 2026
+
+La branche candidate `65a9a51f099e+fork-3` fusionne le commit officiel `65a9a51f099e91c5e2d05c9ae9c3d5e493d51762` dans `2911a3bb6dd1+fork-2` au commit `11770b1f7f3f17b36b22639d131df161d9895819`. Les preuves d'octobre ci-dessous décrivent les versions antérieures.
+
+- Le vrai CLI MDD valide la copie figée, le passage à une revue neuve et la protection du contenu examiné. La fusion d'une PR MDD épingle le commit du worktree accepté. Si une mise à jour de la branche distante change ce commit, la fusion exige une nouvelle validation.
+- Les tests de contrôle et de supervision distinguent la preuve d'arrêt de la génération courante des pipelines et sources indépendantes. Le test de liveness tmux vérifie Pi sous Bun avec un véritable groupe de processus et des exécutables de test.
+- Les tests de mise à jour distinguent les branches épinglées de `config/self-update-source`. Une synchronisation vers un commit épinglé refuse une divergence même lorsque le contenu de la cible est identique. La commande distante qui reçoit un SHA explicite applique ce même refus.
+- Le verdict GitHub d'une branche de version exige la réussite de tous ses jobs obligatoires, dont celui qui charge le bundle externe au SHA qualifié. Le contrôle local de partition couvre 332 scripts et 11 groupes séquentiels. La qualification GitHub, les pilotes Codex et Pi sur tmux et la bascule sont des étapes distinctes.
 
 ## Distribution externe
 
@@ -43,7 +52,7 @@ Après les dernières corrections, le parcours ciblé Codex/Pi de `fm-control-re
 
 Les tests de lancement Codex/Pi et de passage à la revue utilisent le vrai propriétaire de lancement et un terminal simulé. Les pilotes réels ci-dessous complètent cette preuve. La déclaration de rapport complet reste une responsabilité explicite du coordinateur P1 après réception effective du résultat.
 
-La CI hébergée complète a été exécutée sur la branche publiée, avec les lanes macOS et Herdr et le test de structure Ruby `tests/fm-ci-workflow.test.sh`. Les [résultats du workflow CI](https://github.com/abdwhb-png/firstmate/actions/workflows/ci.yml?query=branch%3A2911a3bb6dd1%2Bfork-1) sont la preuve de référence : la qualification exige la réussite de tous les jobs requis sur le commit effectivement publié et installé. Cette CI porte sur `fork-1`. La CI hébergée complète n’a pas été relancée pour la candidate locale `fork-2`, qui n’est ni publiée ni installée.
+La CI hébergée de cette qualification initiale portait sur `fork-1`, avec les lanes macOS et Herdr et le test de structure Ruby `tests/fm-ci-workflow.test.sh`. Pour chaque nouvelle version, la qualification exige la réussite de tous les jobs requis sur le commit destiné à l'installation. [Résultats de la CI de fork-1](https://github.com/abdwhb-png/firstmate/actions/workflows/ci.yml?query=branch%3A2911a3bb6dd1%2Bfork-1).
 
 R1 est indépendant du raccordement MDD et ne modifie pas la capacité de projet. Les tests ne prouvent pas un confinement des terminaux, l'authenticité cryptographique des instructions utilisateur ni une migration automatique de missions vers une autre distribution. Warriors Trading et No-Mistakes sont hors des opérations effectuées pour cette qualification.
 

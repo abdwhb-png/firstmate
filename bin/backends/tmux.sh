@@ -50,11 +50,10 @@ fm_backend_tmux_visible_capture() {  # <target>
   tmux capture-pane -p -t "$1" -S -0
 }
 
-# fm_backend_tmux_send_key: one named key. Mirrors fm-send.sh's --key path:
-# `tmux display-message -p -t "$T" '#{pane_id}' >/dev/null`, then
-# `tmux send-keys -t "$T" "$2"`.
+# fm_backend_tmux_send_key: one named key. Tmux can prefix-match a gone target
+# to a live neighbor, so require exact membership before sending the key.
 fm_backend_tmux_send_key() {  # <target> <key>
-  tmux display-message -p -t "$1" '#{pane_id}' >/dev/null
+  fm_backend_tmux_target_exists "$1" || return 1
   tmux send-keys -t "$1" "$2"
 }
 
@@ -66,13 +65,34 @@ fm_backend_tmux_send_text_submit() {  # <target> <text> <retries> <enter-sleep> 
   fm_tmux_submit_core "$@"
 }
 
+# fm_backend_tmux_own_session: print the name of the tmux session this process
+# was started in. An untargeted display-message picks the most recently used
+# member of a session group, and so does a pane target, so an external client
+# attached through a grouped session (`new-session -t <session>`) would be
+# named instead. The third field of $TMUX is the id of the session the pane was
+# created in, which stays unambiguous across the group; fall back to the
+# untargeted lookup when it is absent, malformed, or stale (tmux answers a
+# killed session's id with empty output and exit 0).
+fm_backend_tmux_own_session() {
+  local sid=${TMUX##*,} name=
+  case "$sid" in
+  ''|*[!0-9]*) ;;
+  *) name=$(tmux display-message -p -t "\$$sid" '#S' 2>/dev/null) ;;
+  esac
+  if [ -n "$name" ]; then
+    printf '%s\n' "$name"
+  else
+    tmux display-message -p '#S'
+  fi
+}
+
 # fm_backend_tmux_container_ensure: reuse the current tmux session when
 # firstmate itself runs inside tmux, else ensure a dedicated detached
 # "firstmate" session exists. Mirrors fm-spawn.sh's container-ensure block;
 # prints the resolved session name.
 fm_backend_tmux_container_ensure() {
   if [ -n "${TMUX:-}" ]; then
-    tmux display-message -p '#S'
+    fm_backend_tmux_own_session
   else
     tmux has-session -t firstmate 2>/dev/null || tmux new-session -d -s firstmate
     printf 'firstmate'
@@ -155,6 +175,84 @@ fm_backend_tmux_window_inventory() {  # <session-target>
       ;;
   esac
   return 1
+}
+
+# Resolve one exact window selector in one exact session to its stable id.
+# The shared dispatcher header owns the accepted target grammar.
+fm_backend_tmux_window_id() {  # <session-name> <window-name|index|@id>
+  local session=$1 selector=$2 rows window_id window_index window_name
+  rows=$(LC_ALL=C tmux list-windows -t "=$session" \
+    -F '#{window_id}|#{window_index}|#{window_name}' 2>/dev/null) || return 1
+  while IFS='|' read -r window_id window_index window_name; do
+    case "$selector" in
+      @*) [ "$window_id" = "$selector" ] || continue ;;
+      *[!0-9]*) [ "$window_name" = "$selector" ] || continue ;;
+      *) [ "$window_index" = "$selector" ] || continue ;;
+    esac
+    printf '%s\n' "$window_id"
+    return 0
+  done <<EOF
+$rows
+EOF
+  return 1
+}
+
+# Adapter-owned tmux endpoint membership. Every comparison is literal and
+# session-scoped where the target names a session, so tmux never gets a chance
+# to satisfy the predicate through its prefix, pattern, or active-window
+# fallbacks.
+fm_backend_tmux_target_exists() {  # <target>
+  local target=${1:-} session selector windows base pane_index window_id
+  [ -n "$target" ] || return 1
+  case "$target" in
+    %*)
+      tmux list-panes -a -F '#{pane_id}' 2>/dev/null | grep -Fqx -- "$target"
+      ;;
+    @*)
+      tmux list-windows -a -F '#{window_id}' 2>/dev/null | grep -Fqx -- "$target"
+      ;;
+    *:*:*)
+      return 1
+      ;;
+    *:*)
+      session=${target%%:*}
+      selector=${target#*:}
+      case "$session" in =*) session=${session#=} ;; esac
+      case "$selector" in =*) selector=${selector#=} ;; esac
+      [ -n "$session" ] && [ -n "$selector" ] || return 1
+
+      case "$selector" in
+        @*) fm_backend_tmux_window_id "$session" "$selector" >/dev/null ; return ;;
+        *[!0-9]*) ;;
+        *) fm_backend_tmux_window_id "$session" "$selector" >/dev/null ; return ;;
+      esac
+
+      windows=$(fm_backend_tmux_window_inventory "=$session") || return 1
+      if printf '%s\n' "$windows" | grep -Fqx -- "$selector"; then
+        return 0
+      fi
+
+      case "$selector" in
+        *.*)
+          base=${selector%.*}
+          pane_index=${selector##*.}
+          [ -n "$base" ] && [ -n "$pane_index" ] || return 1
+          case "$base" in *[!0-9]*) return 1 ;; esac
+          case "$pane_index" in *[!0-9]*) return 1 ;; esac
+          window_id=$(fm_backend_tmux_window_id "$session" "$base") || return 1
+          tmux list-panes -t "$window_id" -F '#{pane_index}' 2>/dev/null \
+            | grep -Fqx -- "$pane_index"
+          ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *)
+      session=$target
+      case "$session" in =*) session=${session#=} ;; esac
+      [ -n "$session" ] || return 1
+      tmux has-session -t "=$session" 2>/dev/null
+      ;;
+  esac
 }
 
 # fm_backend_tmux_kill: remove one explicitly named task window.
@@ -321,7 +419,7 @@ fm_backend_tmux_foreground_argv0s() {  # <target>
 # distinguish a truly idle pane from a rewritten process title.
 fm_backend_tmux_agent_state() {  # <target>
   local target=$1 comm session window windows inventory_status
-  local foreground argv0s name pid args fg_seen=0 fg_shell=0 fg_other=0
+  local foreground argv0s pids name pid args fg_seen=0 fg_shell=0 fg_other=0
   case "$target" in
     *:*:*|'':*|*:'') printf 'unreadable'; return 0 ;;
     *:*) ;;
@@ -370,16 +468,34 @@ EOF
 
   # The shared process owner handles interpreted harnesses. Passing the PID
   # preserves script paths with spaces instead of trusting their ps prefix.
-  while IFS= read -r pid; do
-    [ -n "$pid" ] || continue
-    args=$(LC_ALL=C ps -p "$pid" -o args= 2>/dev/null) || args=
-    if [ "$(fm_agent_process_classify '' '' "$args" "$pid")" = agent ]; then
-      printf 'alive'
-      return 0
-    fi
-  done <<EOF
-$(fm_backend_tmux_foreground_pids "$target")
+  pids=$(fm_backend_tmux_foreground_pids "$target")
+  if [ -n "$pids" ]; then
+    while IFS= read -r pid; do
+      [ -n "$pid" ] || continue
+      args=
+      if [ ! -r "/proc/$pid/cmdline" ]; then
+        args=$(LC_ALL=C ps -p "$pid" -o args= 2>/dev/null) || args=
+      fi
+      if [ "$(fm_agent_process_classify '' '' "$args" "$pid")" = agent ]; then
+        printf 'alive'
+        return 0
+      fi
+    done <<EOF
+$pids
 EOF
+  else
+    # Use argument-only evidence if the foreground PID probe is unavailable.
+    # Never use it to override a negative result from intact kernel argv.
+    while IFS= read -r name; do
+      [ -n "$name" ] || continue
+      if [ "$(fm_agent_process_classify '' '' "$name")" = agent ]; then
+        printf 'alive'
+        return 0
+      fi
+    done <<EOF
+$(fm_backend_tmux_foreground_args "$target")
+EOF
+  fi
 
   comm=$(fm_backend_tmux_current_command "$target") || {
     printf 'unreadable'

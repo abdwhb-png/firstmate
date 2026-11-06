@@ -248,6 +248,22 @@ assert.throws(() => mdd.deliveryCheck(metaFile), /commit|uncommitted/);
 execFileSync('git', ['-C', wt, 'add', '--all']);
 execFileSync('git', ['-C', wt, '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Accepted mission including administrative result']);
 assert.equal(mdd.deliveryCheck(metaFile).outcome, 'accepted');
+// Exercise the actual merge command, with the forge as the only fake.
+const { spawnSync } = await import('node:child_process');
+const home = path.dirname(path.dirname(metaFile));
+const fakebin = path.join(home, 'merge-fakebin');
+const calls = path.join(fakebin, 'calls');
+fs.mkdirSync(fakebin);
+fs.writeFileSync(path.join(fakebin, 'gh'), '#!/bin/bash\nprintf "called\\n" >> "$FM_MDD_TEST_FORGE_CALLS"\nexit 1\n', { mode: 0o700 });
+publishMeta({ ...mdd.readMeta(metaFile), mode: "direct-PR" });
+const wrongHead = '0'.repeat(40);
+const merge = spawnSync('bash', [path.join(root, 'bin/fm-pr-merge.sh'), 'mission', 'https://github.com/example/repo/pull/1', '--expected-head', wrongHead], {
+  encoding: 'utf8', env: { ...process.env, FM_HOME: home, FM_STATE_OVERRIDE: path.dirname(metaFile), PATH: fakebin + ':' + process.env.PATH, FM_MDD_TEST_FORGE_CALLS: calls }
+});
+assert.notEqual(merge.status, 0);
+assert.match(merge.stderr, /MDD.*expected head.*accepted worktree/, merge.stderr);
+assert.equal(fs.existsSync(calls), false);
+
 const reportBefore = fs.readFileSync(reviewReport);
 fs.appendFileSync(reviewReport, ' altered evidence');
 assert.throws(() => mdd.deliveryCheck(metaFile), /stale|changed/);

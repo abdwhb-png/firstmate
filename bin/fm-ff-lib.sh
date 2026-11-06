@@ -6,6 +6,9 @@
 # clean fast-forward, never forcing, merging, or stashing" used by every sync
 # path:
 #   - /updatefirstmate (bin/fm-update.sh) pulls from origin: base_mode "origin".
+#     With an optional config/self-update-source, it instead fetches that one
+#     remote branch for the primary and passes it as a local base, and its
+#     secondmates follow the primary's resulting commit (bin/fm-update.sh owns it).
 #   - the local-HEAD secondmate sync (bin/fm-spawn.sh on launch, bin/fm-bootstrap.sh
 #     on startup) follows the PRIMARY checkout's current default-branch commit:
 #     base_mode is that local commit, with NO fetch and no origin dependency.
@@ -397,16 +400,24 @@ live_secondmate_meta_records() {
 #                  dependency (the local-HEAD secondmate sync). The commit must
 #                  already exist in the target's object store, which it always does
 #                  for a worktree of this same repo; a standalone clone that lacks
-#                  it is skipped rather than fetched.
+#                  it is skipped rather than fetched, unless the caller sets
+#                  FF_IMPORT_FROM to a local repository path that holds it. Then
+#                  that one commit is imported from there first (objects only,
+#                  no ref of the target moves), the same read-only import the
+#                  remote home sync uses. /updatefirstmate sets it to the primary
+#                  checkout when config/self-update-source is in use, because no
+#                  origin fetch then refreshes a standalone clone.
 # Guards are identical in both modes: never force/merge/stash; skip a dirty or
 # wrong-branch target and leave its work untouched. An optional secondmate id
 # enables the content-equivalent divergence proof and durable marker described
-# in this file's header.
+# in this file's header. Pinned releases and callers passing no for the
+# eighth argument keep the marker and refuse every divergent checkout.
 FF_STATUS=""
 FF_INSTR=""
+FF_IMPORT_FROM=""
 ff_target() {
   local dir=$1 label=$2 base_mode=$3 allow_detached=${4:-no} ignore_seed_marker=${5:-no}
-  local secondmate_id=${6:-} reconciliation_state=${7:-}
+  local secondmate_id=${6:-} reconciliation_state=${7:-} reconcile_redundant=${8:-yes}
   FF_STATUS="skipped"
   FF_INSTR=""
 
@@ -446,6 +457,10 @@ ff_target() {
     base="origin/$default"
   else
     base="$base_mode"
+    if [ -n "$FF_IMPORT_FROM" ] \
+      && ! git -C "$dir" rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
+      git -C "$dir" fetch --quiet --no-tags -- "$FF_IMPORT_FROM" "$base" >/dev/null 2>&1 || true
+    fi
   fi
 
   if ! git -C "$dir" rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
@@ -489,6 +504,9 @@ ff_target() {
   fi
   if ! git -C "$dir" merge-base --is-ancestor HEAD "$base" 2>/dev/null; then
     if [ -n "$secondmate_id" ] && [ -n "$reconciliation_state" ] \
+      && [ "$reconcile_redundant" = yes ] \
+      && ! fm_pinned_release_branch "$FM_ROOT" >/dev/null \
+      && ! fm_pinned_release_branch "$dir" >/dev/null \
       && divergence_is_redundant "$dir" "$local_rev" "$base_rev"; then
       instr=$(changed_instr "$dir" "$base")
       before=$(git -C "$dir" rev-parse --short HEAD)
