@@ -721,7 +721,7 @@ jobs:
             exit 1
           fi
           if [ "$FM_CI_MDD_RESULT" != success ]; then
-            echo "::error::The external MDD qualification must succeed; got $FM_CI_MDD_RESULT."
+            echo "::error::The external MDD qualification must succeed; got $FM_CI_MDD_RESULT. Promote outside PRs to a reviewed internal branch for private qualification."
             exit 1
           fi
           if [ "$FM_CI_RELEASE_LANE_SKIPPED" = true ]; then

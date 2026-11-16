@@ -12,9 +12,9 @@
 # They also hold the outside pull request gate the maintainer approved in
 # DOP-167 (keep public CI within GitHub's 40-job limit): a PR from an author
 # without write access runs only the quick checks and a failing Full suite
-# verdict until the full-ci label is added, the label and later pushes run the
-# whole suite, any other label neither starts nor cancels a run, and close main
-# pushes keep only the newest run.
+# verdict until the full-ci label is added. Private qualification additionally
+# requires an internal branch. Other labels neither start nor cancel a run;
+# close main pushes keep only the newest run.
 #
 # They also hold the fork opt-out: the repository variables FM_CI_SKIP_PUSH and
 # FM_CI_SKIP_MACOS let a fork skip the push run and the macOS job through a
@@ -461,38 +461,39 @@ test_outside_pr_without_label_runs_only_quick_checks() {
   pass "an unlabelled outside PR runs only the quick checks and a failing Full suite naming full-ci"
 }
 
-# DOP-167: the full-ci label and every later push run the whole suite, and the
-# verdict then follows the lanes.
+# The public label gate does not grant private repository access.
 test_full_ci_label_runs_the_whole_suite() {
-  local all actual out
-  all=$(workflow_jobs | tr '\n' ' ') || fail "could not list ci.yml jobs"
-  actual=$(jobs_running_under action=labeled label=full-ci labels=full-ci | tr '\n' ' ') \
-    || fail "could not resolve full-ci label jobs"
-  [ "$actual" = "$all" ] || fail "adding full-ci must run every job, ran: $actual"
-  actual=$(jobs_running_under labels=bug,full-ci | tr '\n' ' ') || fail "could not resolve labelled push jobs"
-  [ "$actual" = "$all" ] || fail "a later push to a full-ci PR must run every job, ran: $actual"
-  out=$(run_full_suite_verdict labels=full-ci) \
-    || fail "the Full suite verdict must pass on a labelled PR whose lanes passed:"$'\n'"$out"
-  if out=$(run_full_suite_verdict labels=full-ci needs=failure); then
-    fail "the Full suite verdict must fail when a lane failed:"$'\n'"$out"
-  fi
-  if out=$(run_full_suite_verdict labels=full-ci needs=cancelled); then
-    fail "the Full suite verdict must fail when a lane was cancelled:"$'\n'"$out"
-  fi
-  pass "the full-ci label and later pushes run every job, and the verdict follows the lanes"
+  local public actual out context
+  public=$(workflow_jobs | grep -vx tests-mdd | tr '\n' ' ')
+  for context in 'action=labeled label=full-ci labels=full-ci' 'labels=bug,full-ci' 'association=OWNER' 'association=MEMBER' 'association=COLLABORATOR'; do
+    # shellcheck disable=SC2086 # Context is a deliberate argument list.
+    actual=$(jobs_running_under $context | tr '\n' ' ') || fail "could not resolve outside jobs"
+    [ "$actual" = "$public" ] || fail "outside PR reached private qualification: $actual"
+    # shellcheck disable=SC2086
+    if out=$(run_full_suite_verdict $context mdd_result=skipped); then
+      fail 'outside PR passed without private qualification'
+    fi
+    assert_contains "$out" 'MDD qualification' 'missing qualification must be explicit'
+  done
+  for context in success failure cancelled; do
+    if out=$(run_full_suite_verdict head=kunchenguid/firstmate labels=full-ci needs="$context"); then
+      [ "$context" = success ] || fail "failed lanes passed the verdict: $context"
+    else
+      [ "$context" != success ] || fail "qualified internal PR refused: $out"
+    fi
+  done
+  pass "outside labels and author roles cannot expose private qualification or pass its omitted verdict"
 }
 
-# DOP-167: main, own branches and write-access authors run everything as today.
 test_trusted_runs_are_unchanged() {
   local all context actual out
   all=$(workflow_jobs | tr '\n' ' ') || fail "could not list ci.yml jobs"
-  for context in event=push association=OWNER association=MEMBER association=COLLABORATOR head=kunchenguid/firstmate; do
+  for context in event=push head=kunchenguid/firstmate; do
     actual=$(jobs_running_under "$context" | tr '\n' ' ') || fail "could not resolve jobs for $context"
-    [ "$actual" = "$all" ] || fail "$context must run every job as before, ran: $actual"
-    out=$(run_full_suite_verdict "$context") \
-      || fail "the Full suite verdict must pass for $context when its lanes passed:"$'\n'"$out"
+    [ "$actual" = "$all" ] || fail "$context must run every job, ran: $actual"
+    out=$(run_full_suite_verdict "$context") || fail "qualified trusted run refused: $out"
   done
-  pass "main pushes, own branches and write-access authors still run every job and pass the verdict"
+  pass "pushes and own branches run every qualification job and pass only with successful lanes"
 }
 
 # DOP-167: another label neither starts nor cancels a run: no job runs, not
@@ -519,9 +520,9 @@ TABLE
 # full-ci run, the passing Full suite must stay the visible verdict.
 test_late_unrelated_label_run_never_masks_a_full_ci_pass() {
   local after
-  after=$(checks_after_runs "outcome=success" \
-    "action=labeled label=full-ci labels=bug,full-ci outcome=success" \
-    "action=labeled label=bug labels=bug outcome=success") \
+  after=$(checks_after_runs "head=kunchenguid/firstmate outcome=success" \
+    "head=kunchenguid/firstmate action=labeled label=full-ci labels=bug,full-ci outcome=success" \
+    "head=kunchenguid/firstmate action=labeled label=bug labels=bug outcome=success") \
     || fail "could not merge the three runs"
   printf '%s\n' "$after" | grep -qx $'Full suite\tsuccess' \
     || fail "a late unrelated label run must leave Full suite passing, got:"$'\n'"$after"
@@ -554,8 +555,8 @@ test_unrelated_label_never_masks_an_earlier_failure() {
         || fail "after an unrelated label, $name must still read $conclusion (first run: $first), got:"$'\n'"$after"
     done <<<"$before"
   done <<'TABLE'
-labels=full-ci outcome=failure|action=labeled label=bug labels=full-ci,bug|all-failed
-association=OWNER outcome=failure|action=labeled label=bug labels=bug association=OWNER|all-failed
+head=kunchenguid/firstmate labels=full-ci outcome=failure|head=kunchenguid/firstmate action=labeled label=bug labels=full-ci,bug|all-failed
+head=kunchenguid/firstmate association=OWNER outcome=failure|head=kunchenguid/firstmate action=labeled label=bug labels=bug association=OWNER|all-failed
 outcome=success|action=labeled label=bug labels=bug|waiting
 TABLE
   pass "an unrelated label after a failed or waiting suite leaves every earlier check as it was"
@@ -672,7 +673,7 @@ test_fork_skip_variables_are_opt_in() {
       all-but-macos) want=$(printf '%s\n' "$all" | grep -vx macos-stock-bash) ;;
       *) fail "unknown expectation $expected" ;;
     esac
-    actual=$(jobs_running_under event="$event" association=OWNER skip_push="$skip_push" skip_macos="$skip_macos") \
+    actual=$(jobs_running_under event="$event" head=kunchenguid/firstmate association=OWNER skip_push="$skip_push" skip_macos="$skip_macos") \
       || fail "could not resolve the job conditions for $event FM_CI_SKIP_PUSH=$skip_push FM_CI_SKIP_MACOS=$skip_macos"
     [ "$actual" = "$want" ] \
       || fail "$event with FM_CI_SKIP_PUSH=$skip_push FM_CI_SKIP_MACOS=$skip_macos must run $expected jobs"$'\n'"ran: $(printf '%s' "$actual" | tr '\n' ' ')"$'\n'"wanted: $(printf '%s' "$want" | tr '\n' ' ')"
@@ -704,7 +705,7 @@ test_timing_aggregate_still_runs_after_a_failed_lane() {
   local event skip_push expected actual
   while read -r event skip_push expected; do
     [ "$skip_push" != - ] || skip_push=
-    actual=$(job_runs_under tests-timing-aggregate event="$event" association=OWNER skip_push="$skip_push" needs=failure) \
+    actual=$(job_runs_under tests-timing-aggregate event="$event" head=kunchenguid/firstmate association=OWNER skip_push="$skip_push" needs=failure) \
       || fail "could not resolve the aggregate condition for $event FM_CI_SKIP_PUSH=$skip_push"
     [ "$actual" = "$expected" ] \
       || fail "after a failed lane, the aggregate on $event with FM_CI_SKIP_PUSH=$skip_push must resolve $expected, got $actual"
