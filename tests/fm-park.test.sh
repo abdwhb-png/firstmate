@@ -603,6 +603,26 @@ SH
   pass "a park whose record cannot be written refuses before the agent is stopped"
 }
 
+test_mdd_lane_cannot_park_outside_its_assignment_cycle() {
+  local w out rc wt
+  w=$(make_world mdd-preflight "$GH_URL")
+  gh_fixture "$w/gh.1.json"
+  printf 'mdd_state=%s/mission.json\n' "$w" >> "$w/state/lane.meta"
+  cp "$w/state/lane.meta" "$w/meta.before"
+  cp "$w/state/lane.check.sh" "$w/check.before"
+  cp "$w/state/lane.status" "$w/status.before"
+  wt=$(fm_meta_get_test "$w" worktree)
+  rc=0; out=$(run_park "$w" park lane 2>&1) || rc=$?
+  [ "$rc" = 1 ] || fail "MDD lane was parked: $out"
+  case "$out" in *MDD*assignment*) ;; *) fail "missing assignment-cycle explanation: $out" ;; esac
+  cmp -s "$w/meta.before" "$w/state/lane.meta" || fail 'MDD metadata changed'
+  cmp -s "$w/check.before" "$w/state/lane.check.sh" || fail 'MDD merge poll changed'
+  cmp -s "$w/status.before" "$w/state/lane.status" || fail 'MDD status changed'
+  [ ! -e "$w/control.log" ] && [ ! -e "$w/treehouse.log" ] && [ ! -e "$w/state/lane.review-park" ] || fail 'MDD park performed lifecycle side effects'
+  [ "$(git -C "$wt" rev-parse HEAD)" = "$(cat "$w/head")" ] || fail 'MDD worktree changed'
+  pass 'MDD park refuses before stopping the agent or changing its assignment'
+}
+
 test_park_preflight_refusals_leave_the_agent_running() {
   local w out rc
   w=$(make_world park-preflight "$GH_URL")
@@ -1201,7 +1221,13 @@ test_land_waits_for_an_action_under_way() {
   pass "a merge-time cleanup waits for a relaunch of the same lane that is under way"
 }
 
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  fm_test_run "$FM_TEST_ONLY"
+  exit 0
+fi
+
 fm_test_run \
+  test_mdd_lane_cannot_park_outside_its_assignment_cycle \
   test_github_gate_clean_and_each_unclean_condition \
   test_github_gate_refuses_until_every_required_check_reports \
   test_github_gate_waits_for_review_bots_or_quiet_window \

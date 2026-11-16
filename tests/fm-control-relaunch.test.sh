@@ -3203,6 +3203,24 @@ test_away_branch_relaunch_accepts_existing_dispatchable_items() {
   pass "away supervision relaunches existing In-flight and queued items under the saturated fresh-spawn spend cap"
 }
 
+test_confirmed_stop_preserves_pr_identity() {
+  local dir out rc meta url=https://github.com/example/repo/pull/7
+  dir=$(new_case stop-pr-identity rl76)
+  add_ship_task "$dir" rl76 claude
+  meta="$dir/home/state/rl76.meta"
+  printf 'spawn_gen=fixture-stop-1\npr=%s\n' "$url" >> "$meta"
+  fm_pr_poll_prepare "$dir/home/state" rl76 github "$url" github.com example/repo 7 "$ROOT/bin/fm-pr-poll.sh" || fail 'poll preparation failed'
+  fm_pr_poll_publish_prepared || fail 'poll publication failed'
+  fm_pr_poll_artifacts_valid "$dir/home/state" rl76 "$ROOT/bin/fm-pr-poll.sh" || fail 'initial poll invalid'
+  out=$(run_control "$dir" rl76 exit); rc=$?
+  expect_code 0 "$rc" "exit should confirm the stop"$'\n'"$out"
+  [ "$(sed -n 's/^stopped_gen=//p' "$meta")" = fixture-stop-1 ] || fail 'stop receipt missing'
+  fm_pr_poll_artifacts_valid "$dir/home/state" rl76 "$ROOT/bin/fm-pr-poll.sh" || fail 'confirmed stop invalidated registered PR poll'
+  [ "$FM_PR_META_URL" = "$url" ] || fail 'confirmed stop changed PR identity'
+  [ -d "$dir/wt" ] || fail 'confirmed stop removed worktree'
+  pass 'confirmed stop preserves the registered PR identity and worktree'
+}
+
 test_exit_and_relaunch_remove_the_dialog_file() {
   local dir out rc
   dir=$(new_case dialog-file-exit rl70)
@@ -3310,6 +3328,7 @@ fi
 test_mdd_prepared_start_and_fresh_reviewer
 
 test_relaunch_off_opencode_removes_tracked_wiring
+test_confirmed_stop_preserves_pr_identity
 test_exit_and_relaunch_remove_the_dialog_file
 test_exit_removes_the_dialog_file_before_releasing_the_lock
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint

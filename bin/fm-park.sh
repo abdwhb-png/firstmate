@@ -544,6 +544,9 @@ park_preflight() {  # <id>
   local id=$1 meta kind pr wt crew secs backend
   meta="$STATE/$id.meta"
   [ -f "$meta" ] || { echo "no task record"; return 1; }
+  [ -z "$(fm_meta_get "$meta" mdd_state)" ] || {
+    echo "MDD lanes must follow their assignment cycle instead of automatic parking"; return 1
+  }
   backend=$(fm_backend_of_meta "$meta")
   if ! fm_control_backend_state_verified "$backend" ||
     ! fm_control_backend_exit_supported "$backend" ||
