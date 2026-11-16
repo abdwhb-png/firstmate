@@ -118,6 +118,85 @@ test_routine_then_terminal_after_restart() {
   pass "lifecycle: routine self-handles, terminal survives a watcher restart, buffers once, no dup, injects once"
 }
 
+test_two_direct_returns_survive_restart_until_ack() {
+  local dir state fakebin out drain_out drain_err impl_report review_report
+  local impl_event review_event first_rows replayed_rows buffered epoch sequence kind key payload
+  dir=$(make_supercase wd-direct-returns)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  out="$dir/watch.out"
+  drain_out="$dir/drain.out"
+  drain_err="$dir/drain.err"
+  impl_report="$dir/implementation-report.md"
+  review_report="$dir/review-report.md"
+  first_rows="$dir/first-rows.tsv"
+  replayed_rows="$dir/replayed-rows.tsv"
+  buffered="$dir/buffered.txt"
+  mkdir -p "$dir/impl" "$dir/review"
+  fm_write_meta "$state/direct-impl.meta" "window=firstmate:fm-direct-impl" \
+    "backend=tmux" "kind=ship" "harness=codex" "worktree=$dir/impl"
+  fm_write_meta "$state/direct-review.meta" "window=firstmate:fm-direct-review" \
+    "backend=tmux" "kind=ship" "harness=codex" "worktree=$dir/review"
+  printf 'Implementation complete.\n' > "$impl_report"
+  printf 'Review found a regression.\n' > "$review_report"
+  impl_event="direct-impl.status: done: report $impl_report"
+  review_event="direct-review.status: failed: report $review_report"
+
+  printf 'done: report %s\n' "$impl_report" > "$state/direct-impl.status"
+  run_watcher_once "$state" "$fakebin" "$out" || fail "watcher missed the implementation return"
+  assert_contains "$(cat "$out")" "signal: $state/direct-impl.status" "wrong implementation wake"
+  printf 'failed: report %s\n' "$review_report" > "$state/direct-review.status"
+  # Keep collecting as a handling successor while the first wake awaits its drain.
+  FM_WATCH_HANDLING_SUCCESSOR=1 run_watcher_once "$state" "$fakebin" "$out" \
+    || fail "restarted watcher missed the review return"
+  assert_contains "$(cat "$out")" "signal: $state/direct-review.status" "wrong review wake"
+
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2> "$drain_err" \
+    || fail "first direct-return drain failed"
+  assert_contains "$(cat "$drain_out")" "$impl_event" "wrong implementation attribution"
+  assert_contains "$(cat "$drain_out")" "$review_event" "wrong review attribution"
+  awk -F '\t' 'NF == 5 && $2 ~ /^[0-9]+$/ && $3 == "signal"' "$drain_out" > "$first_rows"
+  [ "$(wc -l < "$first_rows" | tr -d ' ')" -eq 2 ] || fail "expected two durable signal rows"
+  assert_contains "$(cat "$first_rows")" "$(printf '\tsignal\tdirect-impl.status\tsignal: %s' "$state/direct-impl.status")" "wrong implementation queue identity"
+  assert_contains "$(cat "$first_rows")" "$(printf '\tsignal\tdirect-review.status\tsignal: %s' "$state/direct-review.status")" "wrong review queue identity"
+
+  FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=3600 \
+    handle_wake "signal: $state/direct-impl.status" "$state" || fail "implementation handling failed"
+  grep -Fx -- "$impl_event" "$state/.subsuper-escalations" >/dev/null || fail "implementation was not buffered"
+  if grep -Fx -- "$review_event" "$state/.subsuper-escalations" >/dev/null; then
+    fail "review was handled before the interruption"
+  fi
+
+  # Restart presentation without acknowledging the partially handled batch.
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2> "$drain_err" \
+    || fail "replayed direct-return drain failed"
+  awk -F '\t' 'NF == 5 && $2 ~ /^[0-9]+$/ && $3 == "signal"' "$drain_out" > "$replayed_rows"
+  cmp -s "$first_rows" "$replayed_rows" || fail "unacknowledged queue identities or payloads changed"
+  [ "$(cat "$impl_report")" = 'Implementation complete.' ] || fail "implementation report lost on replay"
+  [ "$(cat "$review_report")" = 'Review found a regression.' ] || fail "review report lost on replay"
+
+  while IFS=$'\t' read -r epoch sequence kind key payload; do
+    FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=3600 \
+      handle_wake "$payload" "$state" || fail "replayed handling failed for $key"
+  done < "$replayed_rows"
+  [ "$(grep -Fxc -- "$impl_event" "$state/.subsuper-escalations")" -eq 1 ] || fail "implementation duplicated or lost"
+  [ "$(grep -Fxc -- "$review_event" "$state/.subsuper-escalations")" -eq 1 ] || fail "review duplicated or lost"
+  [ "$(wc -l < "$state/.subsuper-escalations" | tr -d ' ')" -eq 2 ] || fail "unexpected result digest"
+  cp "$state/.subsuper-escalations" "$buffered"
+  FM_STATE_OVERRIDE="$state" FM_ESCALATE_BATCH_SECS=3600 \
+    housekeeping "$state" || fail "housekeeping after replay failed"
+  cmp -s "$buffered" "$state/.subsuper-escalations" || fail "housekeeping changed the handled result digest"
+
+  ack_handled_wakes "$state" "$drain_err" || fail "direct-return acknowledgement failed"
+  [ "$(awk -F '\t' '$3 == "signal" && ($4 == "direct-impl.status" || $4 == "direct-review.status") { n++ } END { print n+0 }' "$state/.wake-queue")" -eq 0 ] \
+    || fail "acknowledged direct-return rows remained queued or could not be read"
+  FM_STATE_OVERRIDE="$state" "$DRAIN" > "$drain_out" 2> "$drain_err" \
+    || fail "post-acknowledgement drain failed"
+  [ "$(awk -F '\t' '$3 == "signal" && ($4 == "direct-impl.status" || $4 == "direct-review.status") { n++ } END { print n+0 }' "$drain_out")" -eq 0 ] \
+    || fail "acknowledged direct returns were presented again or drain output could not be read"
+  pass "lifecycle: two direct returns retain attribution, replay until ack, and handle exactly once across restart"
+}
+
 # --- Phase 2: stale working-pane transient -> persistent -> resumed ----------
 test_stale_pane_transient_persistent_resume() {
   local dir state fakebin win key resumed_gen
@@ -167,5 +246,11 @@ test_stale_pane_transient_persistent_resume() {
   pass "lifecycle: stale pane transient self-handles, persistent escalates once and clears, resumed clears quietly"
 }
 
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  "$FM_TEST_ONLY"
+  exit
+fi
+
 test_routine_then_terminal_after_restart
+test_two_direct_returns_survive_restart_until_ack
 test_stale_pane_transient_persistent_resume
