@@ -3,11 +3,33 @@
 # lifecycle verbs addressed to an exact task id.
 #
 # Usage: fm-control.sh <task-id> assign --role <implementer|reviewer|final-reviewer> --brief-file <handoff> --authority <existing-evidence>
+#        fm-control.sh <task-id> delivery-review --report <json>
+#        fm-control.sh <task-id> delivery-check --stage <draft|ready>
 #        fm-control.sh <task-id> start
 #        fm-control.sh <task-id> candidate --report <file> --complete
 #        fm-control.sh <task-id> accept --result <MDD-result>
-#        fm-control.sh <task-id> authorize --action <delivery|no-mistakes> --authority <evidence>
-#        fm-control.sh <task-id> action-check --action <delivery|no-mistakes>
+#        fm-control.sh <task-id> authorize --action <draft-delivery|delivery|no-mistakes|stack-update> --authority <evidence>
+#        fm-control.sh <task-id> action-check --action <draft-delivery|delivery|no-mistakes|stack-update>
+#        fm-control.sh <task-id> reconcile-delivery|close-mission
+#        fm-control.sh <task-id> demonstration --plan <json>
+#        fm-control.sh <task-id> demonstration --report <json>
+#        fm-control.sh <task-id> demonstration --action <check|checkpoint>
+# delivery-check verifies the complete committed diff. draft reports incomplete
+# checks; ready refuses whitespace, uncommitted work and enabled workflow gaps.
+# MDD and demonstration checks apply only to their bound or configured tasks.
+# delivery-review v1 report: version:1, task (id), repository (absolute worktree),
+# head/base (full commit IDs), complete (boolean), outcome (accepted or
+# correction_required), examiner (attribution, not authentication).
+# scope:{outcome,grouping,dependencies} and risks:{alignment,impact,verification,
+# rollback,detection} contain nonblank explanations. presentation:{path,rationale}
+# names a prepared PR text file. evidence is an array of file paths (possibly empty).
+# All paths are absolute. The private v2 receipt binds the resolved target branch,
+# active brief, report, presentation and evidence. The target must be a branch.
+# Record data stays outside the worktree; changed bindings or older receipts
+# require a fresh examination. New PR/MR tasks require it; old tasks opt in.
+# Verification grants no authority and does not run project-required tests.
+# Demonstration contracts and report fields are owned by fm-demonstration-lib.mjs.
+# Record operations need no running endpoint. Stack reconciliation updates its authorized PR branch.
 #
 # MDD: assign publishes an immutable handoff with metadata under the task lock.
 # A live implementer receives its next packet through fm-send; reviewer roles
@@ -217,6 +239,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-polytoken-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-dod-lib.sh
+. "$SCRIPT_DIR/fm-dod-lib.sh"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 # shellcheck source=bin/fm-worker-account-lib.sh
@@ -300,7 +324,9 @@ MDD_AUTHORITY=
 MDD_REPORT=
 MDD_RESULT=
 MDD_ACTION=
+DELIVERY_STAGE=
 MDD_COMPLETE=0
+DEMONSTRATION_PLAN=
 control_want_value=
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
@@ -308,6 +334,8 @@ for control_arg in "$@"; do
       --*) die "--$control_want_value requires a value" ;;
     esac
     case "$control_want_value" in
+      stage) DELIVERY_STAGE=$control_arg ;;
+      plan) DEMONSTRATION_PLAN=$control_arg ;;
       action) MDD_ACTION=$control_arg ;;
       report) MDD_REPORT=$control_arg ;;
       result) MDD_RESULT=$control_arg ;;
@@ -329,12 +357,14 @@ for control_arg in "$@"; do
     continue
   fi
   case "$control_arg" in
+    --stage) control_want_value=stage ;;
+    --plan) control_want_value=plan ;;
     --action) control_want_value=action ;;
     --complete) MDD_COMPLETE=1 ;;
     --report) control_want_value=report ;;
     --result) control_want_value=result ;;
     --role) control_want_value=role ;;
-    --brief-file) control_want_value=brief-file ;;
+    --brief-file) control_want_value='brief-file' ;;
     --authority) control_want_value=authority ;;
     --harness) control_want_value=harness ;;
     --harness=*) NEW_HARNESS=${control_arg#--harness=}; HARNESS_SET=1 ;;
@@ -364,6 +394,8 @@ if [ "$VERB" != relaunch ]; then
   [ "$HARNESS_SET" = 0 ] && [ "$MODEL_SET" = 0 ] && [ "$EFFORT_SET" = 0 ] && [ "$ACCOUNT_SET" = 0 ] && [ "$NOTE_SET" = 0 ] \
     || die "--harness, --model, --effort, --account, and --note apply to 'relaunch' only"
 fi
+[ -z "$DELIVERY_STAGE" ] || [ "$VERB" = delivery-check ] || die '--stage applies to delivery-check only'
+[ -z "$DEMONSTRATION_PLAN" ] || [ "$VERB" = demonstration ] || die '--plan applies to demonstration only'
 [ "$ACCOUNT_SET" = 0 ] || [ -n "$NEW_ACCOUNT" ] || die "--account requires a non-empty value"
 [ "$HARNESS_SET" = 0 ] || [ -n "$NEW_HARNESS" ] || die "--harness requires a non-empty value"
 [ "$MODEL_SET" = 0 ] || [ -n "$NEW_MODEL" ] || die "--model requires a non-empty value"
@@ -408,6 +440,49 @@ if [ ! -f "$META" ]; then
       ;;
   esac
   die "no task '$ID' in $STATE (fm-control resolves an exact task id only)"
+fi
+
+if [ "$VERB" = delivery-review ]; then
+  [ "$MDD_COMPLETE" = 0 ] && [ -n "$MDD_REPORT" ] && [ -z "$MDD_ACTION$MDD_RESULT$MDD_ROLE$MDD_AUTHORITY$MDD_BRIEF$DEMONSTRATION_PLAN" ] || die 'delivery-review requires only --report'
+  # shellcheck source=bin/fm-backlog-transition-lib.sh
+  . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
+  fm_dod_delivery_review_record "$META" "$MDD_REPORT" "$DATA"
+  exit $?
+fi
+
+if [ "$VERB" = delivery-check ]; then
+  fm_dod_delivery_check "$META" "$DELIVERY_STAGE"
+  exit $?
+fi
+
+if [ "$VERB" = demonstration ]; then
+  # Record operations need no live endpoint.
+  demo_lock=$(fm_meta_lock_path "$META") || exit 1
+  fm_lock_acquire_wait "$demo_lock" || exit 1
+  demo_tmp=$(mktemp "$STATE/.$ID.demonstration.XXXXXX") || { fm_lock_release "$demo_lock"; exit 1; }
+  demo_rc=0
+  if [ -n "$DEMONSTRATION_PLAN" ] && [ -z "$MDD_REPORT$MDD_ACTION" ]; then
+    if node "$SCRIPT_DIR/fm-demonstration-lib.mjs" plan "$META" "$DEMONSTRATION_PLAN" "$demo_tmp"; then
+      # shellcheck source=bin/fm-backlog-transition-lib.sh
+      . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
+      fm_backlog_atomic_transition publish "$demo_tmp" "$META" "demonstration contract" "$STATE" || demo_rc=$?
+    else
+      demo_rc=$?
+    fi
+  elif [ -n "$MDD_REPORT" ] && [ -z "$DEMONSTRATION_PLAN$MDD_ACTION" ]; then
+    node "$SCRIPT_DIR/fm-demonstration-lib.mjs" report "$META" "$MDD_REPORT" || demo_rc=$?
+  elif [ -z "$DEMONSTRATION_PLAN$MDD_REPORT" ]; then
+    case "$MDD_ACTION" in
+      check|checkpoint) node "$SCRIPT_DIR/fm-demonstration-lib.mjs" "$MDD_ACTION" "$META" || demo_rc=$? ;;
+      *) echo 'error: demonstration action must be check or checkpoint' >&2; demo_rc=1 ;;
+    esac
+  else
+    echo 'error: demonstration requires exactly one --plan, --report, or --action' >&2
+    demo_rc=1
+  fi
+  rm -f "$demo_tmp"
+  fm_lock_release "$demo_lock"
+  exit "$demo_rc"
 fi
 
 # A remotely placed secondmate records its endpoint on ANOTHER host, so every
@@ -1394,6 +1469,10 @@ do_assign() {
   local lock tmp
   [ -n "$MDD_ROLE" ] && [ -n "$MDD_BRIEF" ] && [ -n "$MDD_AUTHORITY" ] || die "assign needs --role, --brief-file and --authority"
   node "$SCRIPT_DIR/fm-mdd-lib.mjs" validate "$META" >/dev/null || return 1
+  fm_dod_demonstration_check "$META" contract-check || return 1
+  if [ -n "$(fm_meta_get "$META" mdd_assignment)" ]; then
+    fm_dod_demonstration_check "$META" checkpoint || return 1
+  fi
   case "$MDD_ROLE" in
     reviewer|final-reviewer)
       [ "$PREPARED" = 1 ] || do_exit >/dev/null || return 1
@@ -1424,6 +1503,7 @@ do_assign() {
 
 mdd_start() {
   local state
+  fm_dod_demonstration_check "$META" contract-check || return 1
   node "$SCRIPT_DIR/fm-mdd-lib.mjs" dispatch-check "$META" >/dev/null || return 1
   "$SCRIPT_DIR/fm-spawn.sh" "$ID" --relaunch || return 1
   fm_backend_validate_task_endpoint "$META" "$ID" || return 1
@@ -1435,7 +1515,7 @@ mdd_start() {
 
 # Delaying MDD delivery must not bypass the existing self-repository gate.
 case "$VERB:$MDD_ACTION" in
-  authorize:delivery|action-check:delivery)
+  authorize:draft-delivery|action-check:draft-delivery|authorize:delivery|action-check:delivery|authorize:stack-update|reconcile-delivery:*)
     if [ "$(fm_meta_get "$META" mode)" != local-only ]; then
       # shellcheck source=bin/fm-role-lib.sh
       . "$SCRIPT_DIR/fm-role-lib.sh"
@@ -1452,6 +1532,15 @@ esac
 # --- verbs ------------------------------------------------------------------
 
 case "$VERB" in
+  reconcile-delivery|close-mission)
+    [ "$PREPARED" = 1 ] || do_exit >/dev/null || exit 1
+    delivery_lock=$(fm_meta_lock_path "$META") || exit 1
+    fm_lock_acquire_wait "$delivery_lock" || exit 1
+    delivery_rc=0
+    node "$SCRIPT_DIR/fm-mdd-lib.mjs" "$VERB" "$META" || delivery_rc=$?
+    fm_lock_release "$delivery_lock"
+    exit "$delivery_rc"
+    ;;
   assign) do_assign ;;
   start) mdd_start ;;
   action-check)
@@ -1464,11 +1553,13 @@ case "$VERB" in
     ;;
   candidate)
     [ "$MDD_COMPLETE" = 1 ] && [ -n "$MDD_REPORT" ] || die "candidate needs --report and --complete after receiving the full terminal report"
+    fm_dod_demonstration_check "$META" checkpoint || exit 1
     case "$(busy_verdict)" in busy*) die "agent is still working; report is not terminal" ;; esac
     node "$SCRIPT_DIR/fm-mdd-lib.mjs" candidate "$META" "$MDD_REPORT" --complete
     ;;
   accept)
     [ -n "$MDD_RESULT" ] || die "accept needs --result"
+    fm_dod_demonstration_check "$META" accept-check "$MDD_RESULT" || exit 1
     node "$SCRIPT_DIR/fm-mdd-lib.mjs" accept "$META" "$MDD_RESULT"
     ;;
   interrupt)
@@ -1492,6 +1583,7 @@ case "$VERB" in
     echo "$result $ID harness=$HARNESS backend=$BACKEND endpoint=$T worktree=$WT"
     ;;
   relaunch)
+    fm_dod_demonstration_check "$META" contract-check || exit 1
     if [ -n "$(fm_meta_get "$META" mdd_state)" ]; then
       [ "$NOTE_SET$HARNESS_SET$MODEL_SET$EFFORT_SET" = 0000 ] || die "MDD replacements use the current frozen handoff; assign changed instructions explicitly"
       node "$SCRIPT_DIR/fm-mdd-lib.mjs" dispatch-check "$META" >/dev/null || exit 1

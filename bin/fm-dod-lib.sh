@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Single owner of a ship task's mode-specific "Definition of done" block and of
 # the named-head reachability gate that accepts a ship `done:` claim.
+# Recorded examinations also use the caller's fm-pr-lib and metadata locks.
 # Sourced by bin/fm-brief.sh, which renders it into a generated ship brief, and by
 # bin/fm-promote.sh, which renders it into the ship instructions a promoted scout
 # receives. Both paths must hand the worker the same contract: a promoted
@@ -561,6 +562,9 @@ fm_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] [<consent>] [<p
     nm_base="This task's base branch is \`$base\`, not the repository default: pass \`--base-branch $base_q\` on every \`no-mistakes axi run\` that starts a run, so the pipeline rebases onto, opens its PR against, and watches CI for that branch.
 "
   fi
+  if fm_dod_delivery_review_required "$mode" "$forge"; then
+    printf 'When this task requires delivery_review_required=1, send its complete preparation report to Firstmate before presenting it as ready. Firstmate owns its examination. Read %s --help for the report format. Drafts disclose missing checks; a return does not accept delivery or authorize new checks.\n' "$(dirname "${BASH_SOURCE[0]}")/fm-control.sh"
+  fi
   case "$mode:$forge" in
     direct-PR:gerrit)
       cat <<EOF
@@ -697,6 +701,8 @@ EOF
       echo "error: fm_dod_block: unknown delivery mode '$mode'" >&2
       return 1 ;;
   esac
+
+
 }
 
 # 0 when <sha> is contained in a ref under <namespace> in <repo>.
@@ -986,8 +992,265 @@ fm_dod_named_head_reachable_outside_worktree() {  # <worktree> <project> <mode> 
 # output. <state> <id> <meta> supply pr=,
 # pr_head=, and the merge-notified marker; <meta> may be a captured copy
 # (bin/fm-fleet-snapshot.sh), so the marker is read from <state>.
+# Task-bound obligations survive removal of the home setting.
+fm_dod_demonstration_required() {
+  local declaration="${FM_CONFIG_OVERRIDE:-${FM_HOME:-}/config}/demonstration"
+  [ -e "$declaration" ] || [ -L "$declaration" ] || return 1
+  if [ ! -f "$declaration" ] || [ ! -r "$declaration" ] || [ -L "$declaration" ] || [ "$(cat "$declaration")" != required ]; then
+    echo 'demonstration: config/demonstration must be a regular file containing required' >&2
+    return 2
+  fi
+  return 0
+}
+
+fm_dod_demonstration_intake() {  # <plan-file>
+  local required=0
+  fm_dod_demonstration_required || required=$?
+  [ "$required" != 2 ] || return 1
+  if [ "$required" = 0 ] || [ -n "$1" ]; then
+    [ -n "$1" ] && [ -f "$1" ] || {
+      echo 'demonstration: ship intake requires --demonstration <plan.json>; declare the journey or an explicit scoped waiver' >&2
+      return 1
+    }
+    command -v node >/dev/null 2>&1 || { echo 'demonstration: Node is required before dispatch' >&2; return 1; }
+  fi
+}
+
+fm_dod_demonstration_check() {  # <meta> <operation> [expected-pr-url]
+  local required=0
+  fm_dod_demonstration_required || required=$?
+  [ "$required" != 2 ] || return 1
+  if [ "$required" = 0 ] || [ -n "$(fm_dod_meta_value "$1" demonstration)" ]; then
+    FM_HOME="${FM_HOME:-$(cd "$(dirname "$1")/.." && pwd)}" node "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-demonstration-lib.mjs" "$2" "$1" "${@:3}"
+  fi
+}
+
+fm_dod_delivery_review_required() {
+  case "$1:${2:-none}" in
+    no-mistakes:gerrit|no-mistakes:external|direct-PR:gerrit|direct-PR:external) return 1 ;;
+    no-mistakes:*|direct-PR:*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+fm_dod_delivery_reference() {
+  local meta=$1 wt=$2 project=$3 ref
+  ref=$(fm_dod_meta_value "$meta" base_branch)
+  if [ -z "$ref" ] || [ "$ref" = auto ]; then
+    ref=$(git -C "$project" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || ref=
+    if [ -z "$ref" ]; then
+      for ref in main master; do
+        git -C "$wt" rev-parse --verify --quiet "refs/heads/$ref^{commit}" >/dev/null && break
+      done
+    fi
+  fi
+  printf '%s\n' "$ref"
+}
+
+fm_dod_delivery_target() {
+  local meta=$1 wt=$2 project=$3 target='' ref
+  if [ -n "$(fm_dod_meta_value "$meta" mdd_state)" ]; then
+    target=$(node "$(dirname "${BASH_SOURCE[0]}")/fm-mdd-lib.mjs" delivery-target "$meta") || return 1
+  fi
+  if [ -z "$target" ]; then
+    ref=$(fm_dod_delivery_reference "$meta" "$wt" "$project") || return 1
+    ref=$(git -C "$wt" rev-parse --symbolic-full-name --verify --end-of-options "$ref") || return 1
+    case "$ref" in
+      refs/heads/*) target=${ref#refs/heads/} ;;
+      refs/remotes/*) target=${ref#refs/remotes/}; target=${target#*/} ;;
+      *) echo 'delivery review: declare a branch target, not a detached commit' >&2; return 1 ;;
+    esac
+  fi
+  git check-ref-format "refs/heads/$target" >/dev/null || return 1
+  printf '%s\n' "$target"
+}
+
+fm_dod_delivery_base() {
+  local meta=$1 wt=$2 project=$3 reference=${4:-HEAD} base='' head ref
+  head=$(git -C "$wt" rev-parse --verify --end-of-options "$reference^{commit}") || return 1
+  if [ -n "$(fm_dod_meta_value "$meta" mdd_state)" ]; then
+    base=$(node "$(dirname "${BASH_SOURCE[0]}")/fm-mdd-lib.mjs" delivery-base "$meta") || return 1
+  fi
+  if [ -z "$base" ]; then
+    ref=$(fm_dod_delivery_reference "$meta" "$wt" "$project") || return 1
+    base=$(git -C "$wt" rev-parse --verify --end-of-options "$ref^{commit}") || return 1
+    base=$(git -C "$wt" merge-base "$base" "$head") || return 1
+  fi
+  printf '%s\n' "$base"
+}
+
+fm_dod_delivery_brief() {
+  local meta=$1 data=${2:-} brief state
+  state=${meta%/*}
+  data=${data:-${FM_DATA_OVERRIDE:-${FM_HOME:-${state%/*}}/data}}
+  if [ -n "$(fm_dod_meta_value "$meta" mdd_state)" ]; then
+    brief=$(fm_dod_meta_value "$meta" mdd_brief)
+    [ -n "$brief" ] && [ -f "$brief" ] || { echo 'delivery review: active MDD brief is unavailable' >&2; return 1; }
+  else
+    brief="$data/${meta##*/}"; brief="${brief%.meta}/brief.md"
+    [ -f "$brief" ] || brief=
+  fi
+  printf '%s\n' "$brief"
+}
+
+fm_dod_delivery_published_check() {
+  local meta=$1 head=$2 target=$3 wt project base
+  [ "$(fm_dod_meta_value "$meta" delivery_review_required)" = 1 ] || return 0
+  wt=$(fm_dod_meta_value "$meta" worktree)
+  project=$(fm_dod_meta_value "$meta" project)
+  base=$(fm_dod_delivery_base "$meta" "$wt" "$project") || return 1
+  fm_dod_delivery_review_check "$meta" "$head" "$base" "$target"
+}
+
+fm_dod_delivery_review_check() (
+  local meta=$1 head=$2 base=$3 published=${4:-} receipt report digest file expected wt id target brief
+  [ "$(fm_dod_meta_value "$meta" delivery_review_required)" = 1 ] || return 0
+  receipt=$(fm_dod_meta_value "$meta" delivery_review)
+  [ -n "$receipt" ] && [ -f "$receipt" ] && [ ! -L "$receipt" ] || { echo 'delivery review: examination is missing' >&2; return 1; }
+  digest=$(fm_dod_meta_value "$meta" delivery_review_digest)
+  [ -n "$digest" ] && [ "$(fm_pr_sha256 "$receipt")" = "$digest" ] || { echo 'delivery review: receipt changed' >&2; return 1; }
+  wt=$(fm_dod_meta_value "$meta" worktree); wt=$(cd "$wt" && pwd -P) || return 1
+  id=${meta##*/}; id=${id%.meta}
+  target=$(fm_dod_delivery_target "$meta" "$wt" "$(fm_dod_meta_value "$meta" project)") || return 1
+  brief=$(fm_dod_delivery_brief "$meta") || return 1
+  jq -e --arg target "$target" --arg published "${published:-$target}" --arg brief "$brief" --arg head "$head" --arg base "$base" --arg task "$id" --arg repository "$wt" --arg baseRef "$(fm_dod_meta_value "$meta" base_branch)" '
+    .version == 2 and .targetRef == $target and .targetRef == $published and .briefRef == $brief and
+    .baseRef == $baseRef and .report.head == $head and .report.base == $base and .report.task == $task and
+    .report.repository == $repository and .report.complete == true and .report.outcome == "accepted"
+  ' "$receipt" >/dev/null || { echo 'delivery review: examination is incomplete, refused or stale' >&2; return 1; }
+  while IFS= read -r report; do
+    file=$(printf '%s' "$report" | jq -r .path) || return 1
+    expected=$(printf '%s' "$report" | jq -r .digest) || return 1
+    [ -f "$file" ] && [ "$(fm_pr_sha256 "$file")" = "$expected" ] || { echo 'delivery review: referenced report or evidence changed' >&2; return 1; }
+  done < <(jq -c '.proofs[]' "$receipt")
+)
+
+fm_dod_delivery_review_record() (
+  local meta=$1 input=$2 data=$3 captured wt project head base target id report ref file digest brief proofs='[]' receipt directory tmp output lock
+  [ -f "$input" ] && [ ! -L "$input" ] || { echo 'delivery review: report must be a regular file' >&2; return 1; }
+  [ "$(fm_dod_meta_value "$meta" kind)" = ship ] || { echo 'delivery review: a ship task is required' >&2; return 1; }
+  fm_dod_delivery_review_required "$(fm_dod_meta_value "$meta" mode)" "$(fm_dod_meta_value "$meta" forge)" || { echo 'delivery review: a PR or MR delivery is required' >&2; return 1; }
+  wt=$(fm_dod_meta_value "$meta" worktree); wt=$(cd "$wt" && pwd -P) || return 1
+  project=$(fm_dod_meta_value "$meta" project)
+  head=$(git -C "$wt" rev-parse HEAD) || return 1
+  base=$(fm_dod_delivery_base "$meta" "$wt" "$project") || return 1
+  target=$(fm_dod_delivery_target "$meta" "$wt" "$project") || return 1
+  id=${meta##*/}; id=${id%.meta}
+  captured=$(cat "$meta") || return 1
+  report=$(cat "$input") || return 1
+  printf '%s' "$report" | jq -e --arg task "$id" --arg repository "$wt" --arg head "$head" --arg base "$base" '
+    def text: type == "string" and test("[^[:space:]]");
+    def path: text and (test("[\u0000-\u001f]") | not) and startswith("/");
+    .version == 1 and .task == $task and .repository == $repository and .head == $head and .base == $base and
+    (.complete | type == "boolean") and (.outcome == "accepted" or .outcome == "correction_required") and
+    (.examiner | text) and (.scope.outcome | text) and (.scope.grouping | text) and (.scope.dependencies | text) and
+    ([.risks.alignment,.risks.impact,.risks.verification,.risks.rollback,.risks.detection] | all(.[]; text)) and
+    (.presentation.path | path) and (.presentation.rationale | text) and
+    (.evidence | type == "array" and all(.[]; path))
+  ' >/dev/null || { echo 'delivery review: invalid report or source identity' >&2; return 1; }
+  input="$(cd "$(dirname "$input")" && pwd -P)/$(basename "$input")"
+  brief=$(fm_dod_delivery_brief "$meta" "$data") || return 1
+  while IFS= read -r ref; do
+    file=$(printf '%s' "$ref" | jq -r .) || return 1
+    [ -f "$file" ] || { echo 'delivery review: evidence is unavailable' >&2; return 1; }
+    digest=$(fm_pr_sha256 "$file") || return 1
+    [[ "$digest" =~ ^[a-f0-9]{64}$ ]] || return 1
+    proofs=$(printf '%s' "$proofs" | jq --arg path "$file" --arg digest "$digest" '. + [{path:$path,digest:$digest}]') || return 1
+  done < <(printf '%s' "$report" | jq -c --arg input "$input" --arg brief "$brief" '[$input,.presentation.path] + .evidence + (if $brief == "" then [] else [$brief] end) | unique[]')
+  [ "$(cat "$input")" = "$report" ] || { echo 'delivery review: report changed while recording' >&2; return 1; }
+  receipt=$(jq -n --argjson report "$report" --argjson proofs "$proofs" --arg baseRef "$(fm_dod_meta_value "$meta" base_branch)" --arg target "$target" --arg brief "$brief" '{version:2,baseRef:$baseRef,targetRef:$target,briefRef:$brief,report:$report,proofs:$proofs}') || return 1
+  directory="$data/$id"
+  [ ! -L "$directory" ] || { echo 'delivery review: task data is a symlink' >&2; return 1; }
+  mkdir -p "$directory" || return 1
+  lock=$(fm_meta_lock_path "$meta") || return 1
+  fm_lock_acquire_wait "$lock" || return 1
+  tmp=$(mktemp "$directory/.delivery-review.XXXXXX") || { fm_lock_release "$lock"; return 1; }
+  output=$(mktemp "${meta%/*}/.$id.delivery-review.XXXXXX") || { rm -f "$tmp"; fm_lock_release "$lock"; return 1; }
+  trap 'rm -f "$tmp" "$output"; fm_lock_release "$lock"' EXIT
+  printf '%s\n' "$receipt" > "$tmp" || return 1
+  digest=$(fm_pr_sha256 "$tmp") || return 1
+  [[ "$digest" =~ ^[a-f0-9]{64}$ ]] || return 1
+  file="$directory/delivery-review-$digest.json"
+  if [ -e "$file" ] || [ -L "$file" ]; then
+    [ ! -L "$file" ] && [ "$(fm_pr_sha256 "$file")" = "$digest" ] || return 1
+    rm -f "$tmp"
+  else
+    ln "$tmp" "$file" || return 1
+    rm -f "$tmp"
+  fi
+  [ "$(git -C "$wt" rev-parse HEAD)" = "$head" ] && [ "$(fm_dod_delivery_base "$meta" "$wt" "$project")" = "$base" ] || { echo 'delivery review: source changed while recording' >&2; return 1; }
+  [ "$(cat "$meta")" = "$captured" ] || { echo 'delivery review: task changed while recording' >&2; return 1; }
+  sed -e '/^delivery_review=/d' -e '/^delivery_review_required=/d' -e '/^delivery_review_digest=/d' "$meta" > "$output" || return 1
+  printf 'delivery_review_required=1\ndelivery_review=%s\ndelivery_review_digest=%s\n' "$file" "$digest" >> "$output"
+  fm_backlog_atomic_transition publish "$output" "$meta" 'delivery examination' "${meta%/*}" || return 1
+  printf 'delivery review: recorded %s at %s\n' "$id" "$head"
+)
+
+fm_dod_delivery_check() {  # <meta> <draft|ready>
+  local meta=$1 stage=$2 wt project head base diagnostics='' failed=0 owner reference=HEAD
+  case "$stage" in draft|ready) ;; *) echo 'delivery: stage must be draft or ready' >&2; return 2 ;; esac
+  case "$(fm_dod_meta_value "$meta" kind)" in ''|ship) ;; *) echo 'delivery: a ship task is required' >&2; return 1 ;; esac
+  wt=$(fm_dod_meta_value "$meta" worktree)
+  project=$(fm_dod_meta_value "$meta" project)
+  wt=${wt:-${3:-}}
+  project=${project:-${4:-}}
+  if [ -z "$wt" ] || [ ! -d "$wt" ]; then
+    if [ "$(fm_dod_meta_value "$meta" mode)" = local-only ] && [ -z "$(fm_dod_meta_value "$meta" mdd_state)$(fm_dod_meta_value "$meta" demonstration)" ]; then
+      wt=$project
+      reference="refs/heads/$(fm_dod_meta_value "$meta" branch)"
+      head=$(fm_dod_local_done_head "$meta") || return 1
+      [ "$(git -C "$wt" rev-parse --verify --end-of-options "$reference^{commit}")" = "$head" ] || return 1
+    else
+      echo 'delivery: task worktree is unavailable' >&2; return 1
+    fi
+  fi
+  head=$(git -C "$wt" rev-parse --verify --end-of-options "$reference^{commit}") || return 1
+  owner="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-mdd-lib.mjs"
+  base=$(fm_dod_delivery_base "$meta" "$wt" "$project" "$reference") || return 1
+  if [ -n "$(fm_dod_meta_value "$meta" mdd_state)" ] && [ "$stage" = draft ]; then
+    node "$owner" draft-check "$meta" >/dev/null || return 1
+  fi
+  if ! fm_dod_delivery_review_check "$meta" "$head" "$base"; then failed=1; fi
+  if ! diagnostics=$(git -C "$wt" diff --check "$base" "$head" 2>&1); then
+    printf '%s\n' "$diagnostics"; failed=1
+  fi
+  diagnostics=$(git -C "$wt" status --porcelain --untracked-files=all) || return 1
+  if [ -n "$diagnostics" ]; then
+    printf 'delivery: uncommitted content remains\n%s\n' "$diagnostics"; failed=1
+  fi
+  if [ "$stage" = draft ]; then
+    if ! fm_dod_demonstration_check "$meta" contract-check; then return 1; fi
+    if ! fm_dod_demonstration_check "$meta" checkpoint; then failed=1; fi
+  else
+    if ! fm_dod_demonstration_check "$meta" check; then failed=1; fi
+    if [ -n "$(fm_dod_meta_value "$meta" mdd_state)" ]; then
+      if ! node "$owner" delivery-check "$meta"; then failed=1; fi
+    fi
+  fi
+  [ "$(git -C "$wt" rev-parse --verify --end-of-options "$reference^{commit}")" = "$head" ] || { echo 'delivery: head changed during verification' >&2; return 1; }
+  if [ "$failed" = 1 ]; then
+    printf 'stage=%s head=%s status=incomplete\n' "$stage" "$head"
+    [ "$stage" = draft ]
+  else
+    printf 'stage=%s head=%s status=verified\n' "$stage" "$head"
+  fi
+}
+
 fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state> <id> <meta> [meta-locked]]
   local kind=$1 mode=$2 wt=$3 project=$4 line=$5 state=${6:-} id=${7:-} meta=${8:-} url sha gerrit captured=''
+  if [ "$kind" = ship ] && [ -n "$meta" ] && fm_dod_should_gate_ship_done "$kind" "$mode" "$line"; then
+    local demonstration_check
+    if ! demonstration_check=$(fm_dod_delivery_check "$meta" ready "$wt" "$project" 2>&1); then
+      printf '%s\n' "$demonstration_check"
+      return 1
+    fi
+  elif [ "$kind" = ship ] && [ -n "$meta" ] && [ "$(status_line_verb "$line")" = 'done' ]; then
+    local demonstration_progress
+    if ! demonstration_progress=$(fm_dod_demonstration_check "$meta" checkpoint 2>&1); then
+      printf '%s\n' "$demonstration_progress"
+      return 1
+    fi
+  fi
   if [ -n "$meta" ] && [ -n "$(fm_dod_meta_value "$meta" mdd_state)" ]; then
     local mdd_check
     if ! mdd_check=$(node "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-mdd-lib.mjs" delivery-check "$meta" 2>&1); then
@@ -1031,7 +1294,7 @@ fm_dod_accept_ship_done() {  # <kind> <mode> <worktree> <project> <line> [<state
     return 1
   fi
   if [ "$gerrit" = 1 ]; then
-    case "$mode" in
+  case "$mode" in
       no-mistakes|'')
         fm_dod_nm_custody_returned "$wt" || return 1 ;;
     esac

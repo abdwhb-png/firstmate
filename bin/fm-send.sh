@@ -1022,6 +1022,14 @@ else
       esac
     fi
   fi
+  if [ "$INBOX_PLANE" = 1 ] && [ -n "${TARGET_META:-}" ] && [ "$(fm_meta_get "$TARGET_META" kind)" = ship ]; then
+    DEMONSTRATION_RECORD=$(fm_meta_get "$TARGET_META" demonstration)
+    if [ -n "$DEMONSTRATION_RECORD" ]; then
+      MESSAGE="$MESSAGE
+
+Demonstration obligation remains current: read $DEMONSTRATION_RECORD and preserve its whole journey through this correction and your complete return."
+    fi
+  fi
   if [ "$INBOX_PLANE" = 1 ] && [ "$TARGET_BACKEND" = remote ]; then
     # Remote inbox leg: the message becomes a durable record in the remote
     # home's steering inbox, written idempotently by the host-local leg, then

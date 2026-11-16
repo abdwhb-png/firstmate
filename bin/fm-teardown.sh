@@ -570,6 +570,8 @@ fi
 fm_lease_guard "$ID" "teardown (fm-teardown)"
 
 META="$STATE/$ID.meta"
+MDD_CLOSURE_CHECK=legacy
+
 TREEHOUSE_PROJECT_LOCK=
 TREEHOUSE_PROJECT_LOCK_HELD=0
 TREEHOUSE_SLOT_LOCK_REQUIRED=0
@@ -1289,6 +1291,11 @@ teardown_require_backend_prerequisites "$BACKEND" "$ID" || exit 1
 if [ "$BACKEND" = t3code ]; then
   fm_backend_runtime_check t3code || exit 1
   [ "$TEARDOWN_META_KIND" != secondmate ] || t3code_secondmate_lsof_check "$ID" "$(fm_meta_get "$META" home)" || exit 1
+fi
+if [ -f "$META" ] && grep -q '^mdd_state=' "$META"; then
+  mdd_retention_args=()
+  [ "$FORCE" != --force ] || mdd_retention_args+=(--discard)
+  MDD_CLOSURE_CHECK=$(node "$SCRIPT_DIR/fm-mdd-lib.mjs" teardown-check "$META" "${mdd_retention_args[@]+"${mdd_retention_args[@]}"}") || exit 1
 fi
 if [ "${FM_TEARDOWN_GUARD_DONE:-0}" != 1 ]; then
   "$FM_ROOT/bin/fm-guard.sh" || true
@@ -2140,6 +2147,10 @@ validate_worktree_teardown_safety() {
     echo "REFUSED: cannot inspect worktree $WT for uncommitted changes." >&2
     echo "Restore the git index state, or get the captain's explicit OK to discard, then --force." >&2
     return 1
+  fi
+  if [ -z "$MDD_CLOSURE_CHECK" ]; then
+    node "$SCRIPT_DIR/fm-mdd-lib.mjs" teardown-check "$META" >/dev/null || return 1
+    dirty_raw=
   fi
   dirty=$(printf '%s\n' "$dirty_raw" | grep -vE '^\?\? (\.claude/|\.fm-(grok|kimi)-turnend$)' || true)
 
@@ -4023,10 +4034,6 @@ elif [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
     "$SCRIPT_DIR/fm-t3code-codex-env.sh" cleanup "$WT" || exit 1
     git -C "$WT" ls-files --error-unmatch CLAUDE.local.md >/dev/null 2>&1 || rm -f "$WT/CLAUDE.local.md"
   fi
-  # Kills remaining processes in the worktree (including the agent), resets, returns
-  # to pool. treehouse resolves the pool from the working directory, so run it from
-  # the project. teardown_treehouse_return tolerates transient and stale git locks
-  # left by a killed crew process; see the script header for retry and stale-lock proof.
   post_lock_cleanup_check=
   if [ "$FORCE" != "--force" ] && [ "$KIND" != scout ] && [ "$KIND" != secondmate ]; then
     post_lock_cleanup_check=validate_worktree_teardown_safety
@@ -4036,10 +4043,17 @@ elif [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
   fi
   wt_pool_slot=0
   fm_treehouse_pool_slot "$PROJ" "$WT" && wt_pool_slot=1
-  teardown_treehouse_return "$WT" "$PROJ" "worktree" "$post_lock_cleanup_check" || {
-    echo "error: treehouse return failed for worktree $WT; teardown aborted" >&2
-    exit 1
-  }
+  if [ "$wt_pool_slot" = 0 ] && [ -n "$(fm_meta_get "$META" mdd_state)" ]; then
+    git -C "$PROJ" worktree remove --force -- "$WT" || {
+      echo "error: Git could not remove MDD worktree $WT; teardown aborted" >&2
+      exit 1
+    }
+  else
+    teardown_treehouse_return "$WT" "$PROJ" "worktree" "$post_lock_cleanup_check" || {
+      echo "error: treehouse return failed for worktree $WT; teardown aborted" >&2
+      exit 1
+    }
+  fi
   [ "$wt_pool_slot" = 0 ] || teardown_note_dirty_return "$WT"
   # The slot is back in the pool, so this task's claim on it is spent. Dropping
   # it here - and only after a return that succeeded - keeps a returned slot

@@ -1,0 +1,38 @@
+{
+  "skill_name": "ship-landing",
+  "evals": [
+    {
+      "id": 1,
+      "name": "classic-fragmented-wave",
+      "prompt": "A project does not use MDD. Its worker proposes separate PRs for an endpoint, its form and tests of the same behavior. Examine the set before publication.",
+      "expectations": [
+        "Regroups the consumer, contract and required tests when they provide one acceptance decision.",
+        "Uses the existing brief and does not create an MDD contract or a numerical quota."
+      ],
+      "expected_output": "Examine the actual delivery and retain its justified boundaries and limits without executing.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "irreversible-rollback",
+      "prompt": "Tests pass and the diff is small, but a migration irreversibly removes customer data. Assess the delivery preparation; no destructive authority exists.",
+      "expectations": [
+        "Keeps the irreversible rollback and required authority explicit despite favorable other categories.",
+        "Does not average risk into permission or invoke a pipeline or a new reviewer."
+      ],
+      "expected_output": "Examine the actual delivery and retain its justified boundaries and limits without executing.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "corrected-presentation",
+      "prompt": "The public-offer composition moved from the buyer request PR to discovery. The old demonstration and explanation still attribute it to the buyer PR. Prepare the delivery examination.",
+      "expectations": [
+        "Rechecks the actual heads, dependencies and whole presentation after the move.",
+        "Retains historical evidence and refreshes current applicability; does not assert that six PRs implies good review boundaries."
+      ],
+      "expected_output": "Examine the actual delivery and retain its justified boundaries and limits without executing.",
+      "files": []
+    }
+  ]
+}

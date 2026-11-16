@@ -116,28 +116,66 @@ jobs:
         run: bin/fm-test-run.sh --check-coverage
 
   tests-mdd:
-    name: ${{ (github.event.action == 'labeled' && github.event.label.name != 'full-ci') && 'Not run for label - ' || '' }}Qualified external MDD interface
+    name: ${{ (github.event.action == 'labeled' && github.event.label.name != 'full-ci') && 'Not run for label - ' || '' }}Qualified external MDD interface (${{ matrix.contract }})
     runs-on: ubuntu-24.04
-    if: ${{ !(github.event_name == 'push' && vars.FM_CI_SKIP_PUSH == '1') && !(github.event.action == 'labeled' && github.event.label.name != 'full-ci') && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
-    # Fast tier: real CLI qualification plus simulated agent lifecycle.
+    if: ${{ !(github.event_name == 'push' && vars.FM_CI_SKIP_PUSH == '1') && !(github.event.action == 'labeled' && github.event.label.name != 'full-ci') && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        contract: [legacy, delivery, portable-v06]
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
       - uses: actions/checkout@v6
+        if: matrix.contract == 'legacy'
         with:
           repository: abdwhb-png/agent-tools
           ref: 71a3d3570d5dd04992f16dfff617bb31090d7732
           path: .qualification/agent-tools
-      - name: Qualify the real external bundle
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        if: matrix.contract != 'legacy'
+        with:
+          repository: abdwhb-png/agent-stack
+          ref: 1686f534a51381324e4f040a1d327daaad4fd926
+          path: .qualification/agent-stack
+          ssh-key: ${{ secrets.AGENT_STACK_READ_KEY }}
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        if: matrix.contract != 'legacy'
+        with:
+          repository: abdwhb-png/agent-stack
+          ref: ${{ matrix.contract == 'delivery' && 'de1fca2329576b00baa23a629531f3f196f3c675' || '928a50fbcd78a8276f636b56b4526ee25f8e8047' }}
+          path: .qualification/frozen
+          ssh-key: ${{ secrets.AGENT_STACK_READ_KEY }}
+          persist-credentials: false
+      - name: Qualify legacy mission lifecycle
+        if: matrix.contract == 'legacy'
         env:
           FM_TEST_MDD_BUNDLE: ${{ github.workspace }}/.qualification/agent-tools/skills/mission-driven-dev
         run: |
           set -eu
           bin/fm-test-run.sh tests/fm-mdd.test.sh
           FM_TEST_ONLY=test_mdd_prepared_start_and_fresh_reviewer bin/fm-test-run.sh tests/fm-control-relaunch.test.sh
+      - name: Qualify delivery and current portable missions
+        if: matrix.contract == 'delivery'
+        env:
+          FM_TEST_MDD_DELIVERY_BUNDLE: ${{ github.workspace }}/.qualification/frozen/skills/mission-driven-dev
+          FM_TEST_MDD_PORTABLE_BUNDLE: ${{ github.workspace }}/.qualification/agent-stack/skills/mission-driven-dev
+        run: bin/fm-test-run.sh tests/fm-mdd-delivery.test.sh
+      - name: Qualify frozen portable missions
+        if: matrix.contract == 'portable-v06'
+        run: |
+          set -eu
+          for scenario in draft portable portable-valid portable-workflow; do
+            node tests/mdd-delivery.mjs .qualification/frozen/skills/mission-driven-dev "$scenario"
+          done
 
   # Two duration-balanced portable parallel shards of the Phase 2 proven-isolated
   # set only. Composition owner: bin/fm-test-run.sh (docs/fm-test-portable-shards.md).
@@ -555,7 +593,7 @@ jobs:
 
   macos-stock-bash:
     name: ${{ (github.event.action == 'labeled' && github.event.label.name != 'full-ci') && 'Not run for label - ' || '' }}Stock macOS Bash snapshot compatibility
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     if: ${{ !(github.event_name == 'push' && vars.FM_CI_SKIP_PUSH == '1') && vars.FM_CI_SKIP_MACOS != '1' && !(github.event.action == 'labeled' && github.event.label.name != 'full-ci') && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository || github.event.pull_request.author_association == 'OWNER' || github.event.pull_request.author_association == 'MEMBER' || github.event.pull_request.author_association == 'COLLABORATOR' || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     # Normal tier (see the timeout policy above).
     timeout-minutes: 30
@@ -684,7 +722,7 @@ jobs:
             exit 1
           fi
           if [ "$FM_CI_MDD_RESULT" != success ]; then
-            echo "::error::The external MDD qualification must succeed; got $FM_CI_MDD_RESULT."
+            echo "::error::The external MDD qualification must succeed; got $FM_CI_MDD_RESULT. Promote outside PRs to a reviewed internal branch for private qualification."
             exit 1
           fi
           if [ "$FM_CI_RELEASE_LANE_SKIPPED" = true ]; then

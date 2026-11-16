@@ -190,9 +190,17 @@ if [ "$KIND" = secondmate ]; then
   exit 1
 fi
 
+if [ "$(fm_dod_meta_value "$META" delivery_review_required)" = 1 ]; then
+  fm_dod_delivery_check "$META" ready || exit 1
+fi
+
 # A prior exact merged result may have queued its durable wake immediately
 # before interruption.
 # Finish only its identity-bound receipt before publishing a replacement poll.
+if ! DEMONSTRATION_REASON=$(fm_dod_demonstration_check "$META" live-check "$URL" 2>&1); then
+  echo "error: $DEMONSTRATION_REASON" >&2
+  exit 1
+fi
 fm_pr_poll_retirement_recover_one "$STATE" "$ID" "$SCRIPT_DIR/fm-pr-poll.sh" || {
   echo "error: pending PR poll retirement could not be validated" >&2
   exit 1
@@ -234,7 +242,7 @@ if [ "$PROVIDER" = forgejo ]; then
     echo "error: watching a Forgejo pull request requires tea and jq on PATH" >&2
     exit 1
   fi
-  fm_pr_forgejo_login "$HOST" >/dev/null || {
+  FORGEJO_LOGIN=$(fm_pr_forgejo_login "$HOST") || {
     echo "error: watching a Forgejo pull request at $HOST requires exactly one 'tea login' registered for that host (see 'tea login list')" >&2
     exit 1
   }
@@ -252,29 +260,31 @@ fi
 
 "$FM_ROOT/bin/fm-guard.sh" || true
 
-# pr_head is recorded only when the forge's CLI can supply it. gh exposes the
-# head commit as a selectable field; plain glab exposes it only inside its JSON
-# output, which would need a JSON processor firstmate does not require, and
-# tea's single-PR view ignores field selection entirely, so neither a GitLab
-# nor a Forgejo task records a pr_head here, and neither does a Gerrit task: a
-# Gerrit revision names one patch set, every amend or rebase is a new patch set,
-# and bin/fm-review-diff.sh has no Gerrit path to resolve a current head with,
-# so a recorded revision would silently become the reviewed content. Both
-# consumers already treat it as optional:
-# bin/fm-teardown.sh reads the head from the forge at teardown rather than from
-# metadata and falls back to its provider-agnostic content check, and
-# bin/fm-review-diff.sh fetches a pull request head from the remote when none is
-# recorded and otherwise diffs the local branch, which is the current content.
-# bin/fm-pr-merge.sh reads a GitLab or Forgejo head live at merge time for the
-# same reason, and treats a recorded value that disagrees as stale rather than
-# authoritative.
+# Examined tasks require the published head on every supported PR forge.
+# Legacy tasks retain their optional gh-only head read; merge rechecks the forge.
 WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
 PR_HEAD=
-if [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/dev/null 2>&1; then
+if [ "$(fm_dod_meta_value "$META" delivery_review_required)" != 1 ] && [ "$PROVIDER" = github ] && [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/dev/null 2>&1; then
   if REMOTE_HEAD=$(cd "$WT" && gh pr view "$URL" --json headRefOid -q .headRefOid 2>/dev/null) \
     && fm_pr_head_valid "$REMOTE_HEAD"; then
     PR_HEAD=$REMOTE_HEAD
   fi
+fi
+
+if [ "$(fm_dod_meta_value "$META" delivery_review_required)" = 1 ]; then
+  if [ "$PROVIDER" = github ]; then
+    HEAD_JSON=$(cd "$WT" && gh pr view "$URL" --json headRefOid,baseRefName) || exit 1
+    PR_HEAD=$(printf '%s' "$HEAD_JSON" | jq -er '.headRefOid') || exit 1
+  elif [ "$PROVIDER" = gitlab ]; then
+    HEAD_JSON=$(GITLAB_HOST="$HOST" glab mr view "$NUMBER" -R "https://$HOST/$PROJECT_PATH" -F json) || exit 1
+    PR_HEAD=$(printf '%s' "$HEAD_JSON" | jq -er '.sha') || exit 1
+  elif [ "$PROVIDER" = forgejo ]; then
+    HEAD_JSON=$(tea api --login "$FORGEJO_LOGIN" --repo "$PROJECT_PATH" "/repos/$PROJECT_PATH/pulls/$NUMBER") || exit 1
+    PR_HEAD=$(printf '%s' "$HEAD_JSON" | jq -er '.head.sha') || exit 1
+  fi
+  fm_pr_head_valid "$PR_HEAD" || { echo 'delivery review: published head is unavailable' >&2; exit 1; }
+  REVIEW_TARGET=$(fm_pr_json_target "$PROVIDER" "$HEAD_JSON") || { echo 'delivery review: published target is unavailable' >&2; exit 1; }
+  fm_dod_delivery_published_check "$META" "$PR_HEAD" "$REVIEW_TARGET" || exit 1
 fi
 
 MODE=$(grep '^mode=' "$META" | tail -1 | cut -d= -f2- || true)
@@ -313,6 +323,12 @@ trap pr_check_cleanup EXIT
 trap 'exit 1' HUP INT TERM
 fm_pr_poll_prepare "$STATE" "$ID" "$PROVIDER" "$URL" "$HOST" "$PROJECT_PATH" "$NUMBER" "$SCRIPT_DIR/fm-pr-poll.sh" \
   || { echo "error: could not prepare PR poll" >&2; exit 1; }
+
+if [ -n "$(fm_dod_meta_value "$META" mdd_state)" ]; then
+  mdd_pr_args=()
+  [ "${FM_PR_CHECK_MERGE:-}" != 1 ] || mdd_pr_args+=(--merge)
+  node "$SCRIPT_DIR/fm-mdd-lib.mjs" publication-check "$META" "$URL" "${mdd_pr_args[@]+"${mdd_pr_args[@]}"}" || exit 1
+fi
 
 META_LOCK=$(fm_meta_lock_path "$META") || exit 1
 fm_lock_acquire_wait "$META_LOCK"

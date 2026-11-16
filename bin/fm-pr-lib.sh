@@ -342,6 +342,19 @@ fm_pr_url_parse() {
   FM_PR_NUMBER=${BASH_REMATCH[4]}
 }
 
+fm_pr_json_target() {
+  local provider=$1 json=$2 keys target
+  case "$provider" in
+    github) keys='["baseRefName"]' ;;
+    gitlab) keys='["target_branch"]' ;;
+    forgejo) keys='["base","ref"]' ;;
+    *) return 1 ;;
+  esac
+  target=$(printf '%s' "$json" | jq -er --argjson keys "$keys" 'getpath($keys) | select(type == "string" and length > 0)') || return 1
+  git check-ref-format "refs/heads/$target" >/dev/null || return 1
+  printf '%s\n' "$target"
+}
+
 fm_pr_head_valid() {
   local head=${1-}
   local LC_ALL=C

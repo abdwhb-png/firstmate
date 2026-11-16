@@ -225,6 +225,10 @@ case "${1:-} ${2:-}" in
         fi
         exit 0
         ;;
+      *headRefOid*baseRefName*)
+        cat "$FM_TEST_GH_VIEW_JSON"
+        exit 0
+        ;;
       *headRefOid*)
         cat "$FM_TEST_GH_HEAD"
         exit 0
@@ -458,7 +462,7 @@ write_mr_json() {
   local file=$1 kv key value
   local state=opened detail=mergeable conflicts=false discussions=true
   local head=$MR_HEAD pipeline_sha=$MR_HEAD pipeline_status=success pipeline=present
-  local merge_when_pipeline_succeeds=false merge_after=null
+  local merge_when_pipeline_succeeds=false merge_after=null target=main
   shift
   for kv in "$@"; do
     key=${kv%%=*}
@@ -474,6 +478,7 @@ write_mr_json() {
       pipeline) pipeline=$value ;;
       merge_when_pipeline_succeeds) merge_when_pipeline_succeeds=$value ;;
       merge_after) merge_after=$value ;;
+      target) target=$value ;;
       *) fail "write_mr_json: unknown field '$key'" ;;
     esac
   done
@@ -484,8 +489,8 @@ write_mr_json() {
     "$state" "$detail" "$conflicts" > "$file"
   printf '"blocking_discussions_resolved":%s,"sha":"%s","head_pipeline":%s,' \
     "$discussions" "$head" "$pipeline" >> "$file"
-  printf '"merge_when_pipeline_succeeds":%s,"merge_after":%s}\n' \
-    "$merge_when_pipeline_succeeds" "$merge_after" >> "$file"
+  printf '"target_branch":"%s","merge_when_pipeline_succeeds":%s,"merge_after":%s}\n' \
+    "$target" "$merge_when_pipeline_succeeds" "$merge_after" >> "$file"
 }
 
 # tea mock recording every invocation, so a test can prove the login and
@@ -602,7 +607,7 @@ SH
 # with named fields overridden so one case drives exactly one condition.
 write_forgejo_pr_json() {
   local file=$1 kv key value
-  local state=open mergeable=true merged=false draft=false head=$FJ_HEAD
+  local state=open mergeable=true merged=false draft=false head=$FJ_HEAD target=main
   shift
   for kv in "$@"; do
     key=${kv%%=*}
@@ -613,11 +618,12 @@ write_forgejo_pr_json() {
       merged) merged=$value ;;
       draft) draft=$value ;;
       head) head=$value ;;
+      target) target=$value ;;
       *) fail "write_forgejo_pr_json: unknown field '$key'" ;;
     esac
   done
-  printf '{"state":"%s","mergeable":%s,"merged":%s,"draft":%s,"head":{"sha":"%s"}}\n' \
-    "$state" "$mergeable" "$merged" "$draft" "$head" > "$file"
+  printf '{"state":"%s","mergeable":%s,"merged":%s,"draft":%s,"head":{"sha":"%s"},"base":{"ref":"%s"}}\n' \
+    "$state" "$mergeable" "$merged" "$draft" "$head" "$target" > "$file"
 }
 
 # write_forgejo_status_json <file> [state=<value>] [total_count=<n>]
@@ -3542,12 +3548,137 @@ test_github_updated_head_other_refusals_stop_waiting() {
   pass "fm-pr-merge immediately refuses draft, closed, conflicting, or unreadable updated heads despite pending or missing checks"
 }
 
+test_common_examination_pins_forge_head() {
+  local case_dir head base report body rc suffix remote provider url target
+  for provider in ${FM_TEST_REVIEW_FORGES:-github gitlab forgejo}; do
+  for suffix in ${FM_TEST_REVIEW_CASES:-different matching auto-target retarget late-retarget missing-target}; do
+    if [ "$suffix" = auto-target ] && [ "$provider" != github ]; then continue; fi
+    case "$provider" in
+      github) case_dir=$(make_case "examined-$provider-$suffix"); url=https://github.com/example/repo/pull/9 ;;
+      gitlab) case_dir=$(make_gitlab_case "examined-$provider-$suffix"); url=$MR_URL ;;
+      forgejo) case_dir=$(make_forgejo_case "examined-$provider-$suffix"); url=$FJ_URL ;;
+    esac
+    head=$(git -C "$case_dir/wt" rev-parse HEAD)
+    git -C "$case_dir/wt" branch -M main
+    base=$head
+    target=main
+    if [ "$suffix" = auto-target ]; then target=auto; fi
+    if [ "$suffix" = retarget ]; then git -C "$case_dir/wt" branch release; target=release; fi
+    remote=deadbeefcafefeed0000000000000000deadbeef
+    [ "$suffix" = different ] || remote=$head
+    case "$provider" in
+      github) add_gh_mocks "$case_dir" "$remote" ;;
+      gitlab) write_mr_json "$case_dir/mr.json" head="$remote" pipeline_sha="$remote"; printf '%s\n' "$remote" > "$case_dir/glab-server-head" ;;
+      forgejo) write_forgejo_pr_json "$case_dir/pr.json" head="$remote"; write_forgejo_pr_json "$case_dir/pr-post.json" state=closed mergeable=false merged=true head="$remote"; printf '%s\n' "$remote" > "$case_dir/tea-expected-head" ;;
+    esac
+    if [ "$provider" = forgejo ] && [ "$suffix" = matching ]; then
+      mv "$case_dir/fakebin/tea" "$case_dir/fakebin/tea-original"
+      cat > "$case_dir/fakebin/tea" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = api ]; then
+  case " $* " in *" --login fm-fixture "*) ;; *) echo 'wrong default login' >&2; exit 91 ;; esac
+fi
+exec "$(dirname "$0")/tea-original" "$@"
+SH
+      chmod +x "$case_dir/fakebin/tea"
+    fi
+    if [ "$suffix" = late-retarget ]; then
+      case "$provider" in
+        github)
+          mv "$case_dir/fakebin/gh" "$case_dir/fakebin/gh-original"
+          cat > "$case_dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+set -o pipefail
+case " $* " in
+  *statusCheckRollup*) "$(dirname "$0")/gh-original" "$@" | jq '.baseRefName="changed-after-registration"' ;;
+  *) exec "$(dirname "$0")/gh-original" "$@" ;;
+esac
+SH
+          chmod +x "$case_dir/fakebin/gh" ;;
+        gitlab)
+          mv "$case_dir/fakebin/glab" "$case_dir/fakebin/glab-original"
+          cat > "$case_dir/fakebin/glab" <<'SH'
+#!/usr/bin/env bash
+set -o pipefail
+if [ "$1 $2" = 'mr view' ] && grep -q '^pr=' "$(dirname "$0")/../state/task-x1.meta"; then
+  "$(dirname "$0")/glab-original" "$@" | jq '.target_branch="changed-after-registration"'
+else
+  exec "$(dirname "$0")/glab-original" "$@"
+fi
+SH
+          chmod +x "$case_dir/fakebin/glab" ;;
+        forgejo)
+          mv "$case_dir/fakebin/tea" "$case_dir/fakebin/tea-original"
+          cat > "$case_dir/fakebin/tea" <<'SH'
+#!/usr/bin/env bash
+set -o pipefail
+if [ "$1" = api ] && grep -q '^pr=' "$(dirname "$0")/../state/task-x1.meta"; then
+  "$(dirname "$0")/tea-original" "$@" | jq '.base.ref="changed-after-registration"'
+else
+  exec "$(dirname "$0")/tea-original" "$@"
+fi
+SH
+          chmod +x "$case_dir/fakebin/tea" ;;
+      esac
+    fi
+    if [ "$suffix" = missing-target ]; then
+      case "$provider" in
+        github) jq 'del(.baseRefName)' "$case_dir/github-view.json" > "$case_dir/without-target.json"; mv "$case_dir/without-target.json" "$case_dir/github-view.json" ;;
+        gitlab) jq 'del(.target_branch)' "$case_dir/mr.json" > "$case_dir/without-target.json"; mv "$case_dir/without-target.json" "$case_dir/mr.json" ;;
+        forgejo) jq 'del(.base)' "$case_dir/pr.json" > "$case_dir/without-target.json"; mv "$case_dir/without-target.json" "$case_dir/pr.json" ;;
+      esac
+    fi
+    printf 'base_branch=%s\ndelivery_review_required=1\n' "$target" >> "$case_dir/state/task-x1.meta"
+    mkdir -p "$case_dir/home/data/task-x1"
+    body="$case_dir/home/data/task-x1/body.md"; printf 'Observed result\n' > "$body"
+    report="$case_dir/home/data/task-x1/preparation.json"
+    jq -n --arg repository "$case_dir/wt" --arg head "$head" --arg base "$base" --arg body "$body" '
+      {version:1,task:"task-x1",repository:$repository,head:$head,base:$base,complete:true,outcome:"accepted",examiner:"coordinator",
+       scope:{outcome:"One result",grouping:"Contract and consumer",dependencies:"No other delivery"},
+       risks:{alignment:"Approved result",impact:"Local",verification:"Regression proof",rollback:"Revert",detection:"Explicit error"},
+       presentation:{path:$body,rationale:"Short explanation"},evidence:[]}' > "$report"
+    FM_HOME="$case_dir/home" FM_STATE_OVERRIDE="$case_dir/state" bash "$ROOT/bin/fm-control.sh" task-x1 delivery-review --report "$report" > "$case_dir/examination" 2>&1 || fail "could not examine: $(cat "$case_dir/examination")"
+    rc=0
+    run_pr_merge "$case_dir" task-x1 "$url" > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+    if [ "$suffix" != matching ] && [ "$suffix" != auto-target ]; then
+      [ "$rc" -ne 0 ] || fail 'merge accepted a published identity different from the examination'
+      case "$provider" in
+        github) assert_no_grep 'pr merge ' "$case_dir/gh.log" 'unexamined identity reached the PR merge command' ;;
+        gitlab) assert_no_grep 'mr merge ' "$case_dir/glab.log" 'unexamined identity reached the MR merge command' ;;
+        forgejo) [ -z "$(tea_merge_line "$case_dir/tea.log")" ] || fail 'unexamined identity reached the Forgejo merge command' ;;
+      esac
+      if [ "$suffix" = late-retarget ]; then
+        assert_grep "pr=$url" "$case_dir/state/task-x1.meta" 'late target case did not reach its registration boundary'
+      else
+        assert_no_regex '^pr=' "$case_dir/state/task-x1.meta" 'unexamined identity was registered'
+      fi
+    else
+      expect_code 0 "$rc" "matching examination refused: $(cat "$case_dir/stderr")"
+      case "$provider" in
+        github) assert_grep "--match-head-commit $head" "$case_dir/gh.log" 'merge did not bind the examined commit' ;;
+        gitlab) assert_grep "--sha $head" "$case_dir/glab.log" 'MR did not bind the examined commit' ;;
+        forgejo) assert_grep "head_commit_id=$head" "$case_dir/tea.log" 'Forgejo did not bind the examined commit' ;;
+      esac
+    fi
+  done
+  done
+  pass 'common delivery examination binds registration and forge writes to its exact commit and target'
+}
+
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  "$FM_TEST_ONLY"
+  exit $?
+fi
+
+test_common_examination_pins_forge_head
+
 test_github_updated_head_other_refusals_stop_waiting
 test_github_behind_update_refuses_concurrent_head_change
 test_github_zero_exit_queue_required_refuses_with_exact_retry
 test_github_closed_unqueued_outcome_omits_retry_flags
 test_github_agreeing_queue_rules_keep_retry_guidance
 test_github_conflicting_queue_rules_report_ambiguity
+
 test_verified_merge_records_pr_and_head
 test_pr_metadata_is_recorded_before_the_forge_call
 test_merge_failure_propagates_after_recording

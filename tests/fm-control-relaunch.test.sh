@@ -2799,6 +2799,8 @@ test_herdr_relaunch_resumes_only_the_registered_pi_session() {
       return 0
     }
     dir=$HERDR_CASE_DIR
+    printf '#!/usr/bin/env bash\nprintf "Options: --tui-mode\\n"\n' > "$dir/fakebin/pi"
+    chmod +x "$dir/fakebin/pi"
     rm -f "$dir/fake/herdr-stopped"
     sed -i 's/^harness=claude$/harness=pi/' "$dir/home/state/resume-$registered.meta"
     # Keep the pane's status authority registered to an existing Pi session,
@@ -3154,7 +3156,7 @@ test_mdd_prepared_start_and_fresh_reviewer() {
   git -C "$dir/project" init -q -b main
   git -C "$dir/project" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm init --allow-empty
   out=$(run_spawn "$dir" mdd-test "$dir/project" --prepare --mdd-state .missions/example/state.json \
-    --mdd-skill "$FM_TEST_MDD_BUNDLE" --mode local-only --yolo off --harness "$harness"); rc=$?
+    --mdd-skill "$FM_TEST_MDD_BUNDLE" --mode local-only --yolo off --harness "$harness" --model selected-model --effort high --backend tmux); rc=$?
   expect_code 0 "$rc" "$out"
   wt=$(meta_field "$dir" mdd-test worktree)
   node "$ROOT/tests/mdd-fixture.mjs" "$FM_TEST_MDD_BUNDLE" "$wt" || fail 'mission fixture failed'
@@ -3165,6 +3167,9 @@ test_mdd_prepared_start_and_fresh_reviewer() {
   expect_code 0 "$rc" "$out"
   out=$(run_control "$dir" mdd-test start); rc=$?
   expect_code 0 "$rc" "prepared task did not launch: $out"
+  [ "$(meta_field "$dir" mdd-test model)" = selected-model ] || fail 'prepared start lost its model'
+  [ "$(meta_field "$dir" mdd-test effort)" = high ] || fail 'prepared start lost its effort'
+  assert_contains "$(cat "$dir/fake/literal")" selected-model 'launch omitted selected model'
   gen=$(meta_field "$dir" mdd-test spawn_gen)
   [ -n "$gen" ] || fail 'launch has no execution identity'
   [ "$(meta_field "$dir" mdd-test worktree)" = "$wt" ] || fail 'launch replaced mission worktree'

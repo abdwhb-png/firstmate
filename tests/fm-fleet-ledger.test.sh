@@ -152,13 +152,33 @@ EOF
 }
 
 test_flag_on_records_a_pr_registration() {
-  local pr_url=https://github.com/acme/sample/pull/9 rows out
+  local pr_url=https://github.com/acme/sample/pull/9 rows out wt head base target report body
   make_case on-pr-ready on
-  # An unreadable forge answer: no draft refusal and no recorded head.
-  printf '#!/usr/bin/env bash\nexit 1\n' > "$FAKEBIN/gh"
-  chmod +x "$FAKEBIN/gh"
   out=$(in_home "$ROOT/bin/fm-spawn.sh" "$TASK" "$PROJ_DIR" --mode direct-PR --yolo off 2>&1) \
     || fail "spawn failed: $out"
+  wt=$(grep '^worktree=' "$HOME_DIR/state/$TASK.meta" | tail -1 | cut -d= -f2-)
+  wt=$(cd "$wt" && pwd -P)
+  head=$(git -C "$wt" rev-parse HEAD)
+  target=$(git -C "$PROJ_DIR" branch --show-current)
+  base=$(git -C "$wt" merge-base "$target" HEAD)
+  body="$HOME_DIR/data/$TASK/presentation.md"
+  report="$HOME_DIR/data/$TASK/preparation.json"
+  printf 'Fleet ledger readiness verification.\n' > "$body"
+  jq -n --arg task "$TASK" --arg repository "$wt" --arg head "$head" --arg base "$base" --arg body "$body" '
+    {version:1,task:$task,repository:$repository,head:$head,base:$base,complete:true,outcome:"accepted",examiner:"coordinator",
+     scope:{outcome:"One readiness event",grouping:"Registration and its ledger record",dependencies:"None"},
+     risks:{alignment:"Approved fixture",impact:"Ledger",verification:"Exact event sequence",rollback:"Discard fixture",detection:"Explicit assertion"},
+     presentation:{path:$body,rationale:"One local scenario"},evidence:[]}' > "$report"
+  out=$(in_home "$ROOT/bin/fm-control.sh" "$TASK" delivery-review --report "$report" 2>&1) || fail "delivery examination failed: $out"
+  jq -n --arg head "$head" --arg target "$target" '{headRefOid:$head,baseRefName:$target,isDraft:false}' > "$FAKEBIN/forge.json"
+  cat > "$FAKEBIN/gh" <<'SH'
+#!/usr/bin/env bash
+case "$1 $2" in
+  'pr view') cat "$(dirname "$0")/forge.json" ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$FAKEBIN/gh"
   printf 'done: PR %s\n' "$pr_url" >> "$HOME_DIR/state/$TASK.status"
   out=$(in_home "$ROOT/bin/fm-pr-check.sh" "$TASK" "$pr_url" 2>&1) || fail "PR registration failed: $out"
   out=$(in_home env FM_PR_CHECK_MERGE=1 "$ROOT/bin/fm-pr-check.sh" "$TASK" "$pr_url" 2>&1) \

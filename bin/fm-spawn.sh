@@ -2,6 +2,7 @@
 # Spawn a direct report: a crewmate in a treehouse or Orca worktree, or a
 # secondmate in its isolated firstmate home.
 # Usage: fm-spawn.sh <task-id> <project-dir> --prepare --mdd-state <relative-state-path> --mdd-skill <external-skill-dir> --mode <mode> --yolo <on|off>
+#   --demonstration <plan.json> binds the task's demonstration obligation.
 # Usage: fm-spawn.sh <task-id> <project-dir> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--hermes-profile <name>] [--account <entry>] [--backend <name>] [--herdr-resume-lock-wait]
 #        fm-spawn.sh <task-id> <project-dir> --scout [--base-branch <branch>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--hermes-profile <name>] [--account <entry>] [--backend <name>] [--herdr-resume-lock-wait]
 #        fm-spawn.sh <task-id> [<firstmate-home>] [--harness <name>|harness|launch-command] [--model <name>] [--effort <level>] [--backend <name>] --secondmate
@@ -1056,6 +1057,8 @@ RELAUNCH_PREPARED=0
 MDD_TASK=0
 MDD_STATE=
 MDD_SKILL=
+DEMONSTRATION_PLAN=
+DEMONSTRATION_RECORD=
 # Opt-in only: exact-resume presentation-order lock waits instead of refusing.
 # Absent/unset keeps upstream refuse-on-contention. See header.
 HERDR_RESUME_LOCK_WAIT=0
@@ -1070,6 +1073,10 @@ for a in "$@"; do
       ;;
     esac
     case "$want_value" in
+    demonstration)
+      [ -n "$a" ] || { echo 'error: --demonstration requires a value' >&2; exit 1; }
+      DEMONSTRATION_PLAN=$a
+      ;;
     mdd-state) MDD_STATE=$a ;;
     mdd-skill) MDD_SKILL=$a ;;
     harness)
@@ -1138,6 +1145,7 @@ for a in "$@"; do
     KIND_SET=1
     ;;
   --prepare) PREPARE=1 ;;
+  --demonstration) want_value=demonstration ;;
   --mdd-state) want_value=mdd-state ;;
   --mdd-skill) want_value=mdd-skill ;;
   --relaunch) RELAUNCH=1 ;;
@@ -1268,6 +1276,12 @@ if [ "$TRACEPARENT_SET" -eq 1 ]; then
     echo "error: --traceparent is not a valid W3C traceparent" >&2
     exit 1
   }
+fi
+if [ "$RELAUNCH" = 0 ] && [ "$KIND" = ship ]; then
+  fm_dod_demonstration_intake "$DEMONSTRATION_PLAN" || exit 1
+elif [ -n "$DEMONSTRATION_PLAN" ]; then
+  echo 'error: --demonstration applies to a fresh ship task only' >&2
+  exit 1
 fi
 case "$EFFORT" in
 '' | low | medium | high | xhigh | max | ultra) ;;
@@ -2193,6 +2207,10 @@ fi
 # exit is non-zero if any pair failed. Single-task invocations never carry an '=' in arg
 # one (task ids are bare slugs), so they fall straight through to the logic below.
 idpart=${POS[0]:-}
+if [[ "$idpart" = *=* ]] && [ -n "$DEMONSTRATION_PLAN" ]; then
+  echo 'error: demonstration plans belong to individual tasks; dispatch each task separately' >&2
+  exit 1
+fi
 idpart=${idpart%%=*}
 if [ "$RELAUNCH" -eq 1 ] && [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ]; then
   echo "error: --relaunch is single-task only; relaunch each task explicitly" >&2
@@ -2436,6 +2454,13 @@ if [ "$PREPARE" = 1 ]; then
     exit 1
   fi
   PROJ_ABS=$(cd -- "${POS[1]}" && pwd -P) || exit 1
+  PREPARED_FORGE=$("$FM_ROOT/bin/fm-project-mode.sh" --forge "$(basename "$PROJ_ABS")") || exit 1
+  PREPARED_FORGE=${PREPARED_FORGE:-none}
+  if [ "$MODE" != local-only ]; then
+    case "$PREPARED_FORGE" in
+      gerrit|external) echo "error: MDD preparation does not support forge=$PREPARED_FORGE; use its separate review contract" >&2; exit 1 ;;
+    esac
+  fi
   base=${BASE_BRANCH:-HEAD}
   git -C "$PROJ_ABS" rev-parse --verify "$base^{commit}" >/dev/null
   SPAWN_TREEHOUSE_PROJECT_LOCK=$(fm_treehouse_project_lock_path "$PROJ_ABS") || exit 1
@@ -2457,9 +2482,15 @@ if [ "$PREPARE" = 1 ]; then
   {
     printf 'lifecycle=prepared\nkind=ship\nproject=%s\nworktree=%s\nbranch=%s\n' "$PROJ_ABS" "$WT" "$BRANCH"
     printf 'mode=%s\nyolo=%s\nbase_branch=%s\nupstream_consent=%s\n' "$MODE" "$YOLO" "$BASE_BRANCH" "$UPSTREAM_CONSENT"
+    if fm_dod_delivery_review_required "$MODE" "$PREPARED_FORGE"; then echo 'delivery_review_required=1'; fi
     printf 'backend=%s\nharness=%s\nmodel=%s\neffort=%s\n' "$BACKEND_ARG" "$HARNESS_ARG" "${MODEL:-default}" "${EFFORT:-default}"
+    if [ "$MODE" != local-only ] && [ "$PREPARED_FORGE" != none ]; then printf 'forge=%s\n' "$PREPARED_FORGE"; fi
     printf 'mdd_state=%s\nmdd_data=%s\n' "$MDD_STATE" "$DATA/$ID"
   } > "$SPAWN_META_TMP"
+  if [ -n "$DEMONSTRATION_PLAN" ]; then
+    FM_HOME="$FM_HOME" FM_DATA_OVERRIDE="$DATA" node "$SCRIPT_DIR/fm-demonstration-lib.mjs" initialize "$SPAWN_META_TMP" "$DEMONSTRATION_PLAN" "$SPAWN_META_TMP.demo" "$ID" || exit 1
+    mv "$SPAWN_META_TMP.demo" "$SPAWN_META_TMP" || exit 1
+  fi
   fm_backlog_atomic_transition publish "$SPAWN_META_TMP" "$STATE/$ID.meta" "prepared mission" "$STATE" || exit 1
   SPAWN_META_TMP=
   printf 'prepared %s worktree=%s\n' "$ID" "$WT"
@@ -2669,6 +2700,14 @@ if [ "$RELAUNCH" -eq 1 ]; then
   RELAUNCH_PRIOR_HARNESS=$(fm_meta_get "$RELAUNCH_META" harness)
   KIND=$(fm_meta_get "$RELAUNCH_META" kind)
   [ -n "$KIND" ] || KIND=ship
+  if [ "$KIND" != secondmate ] && { [ -z "$HARNESS_ARG" ] || [ "$HARNESS_ARG" = "$RELAUNCH_PRIOR_HARNESS" ]; }; then
+    [ "$MODEL_SET" = 1 ] || MODEL=$(fm_meta_get "$RELAUNCH_META" model)
+    [ "$EFFORT_SET" = 1 ] || EFFORT=$(fm_meta_get "$RELAUNCH_META" effort)
+    case "$EFFORT" in
+      ''|default|low|medium|high|xhigh|max|ultra) ;;
+      *) echo 'error: recorded effort is invalid; choose an explicit supported effort' >&2; exit 1 ;;
+    esac
+  fi
   # A secondmate whose endpoint is gone already has ONE owner for that
   # recovery: the session-start liveness sweep respawns it with
   # `fm-spawn.sh <id> --secondmate`, which stands its home's own workspace back
@@ -4419,12 +4458,32 @@ if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
   # Use the existing launch-brief overlay for every worker kind, including
   # pre-scope briefs and relaunches. Charters never enter this worker path.
   SOURCE_BRIEF=$BRIEF
+  if [ "$KIND" = ship ]; then
+    if [ "$RELAUNCH" = 1 ]; then
+      DEMONSTRATION_RECORD=$(fm_meta_get "$RELAUNCH_META" demonstration)
+      fm_dod_demonstration_check "$RELAUNCH_META" contract-check || exit 1
+      demo_required=0
+      fm_dod_demonstration_required || demo_required=$?
+      [ "$demo_required" != 2 ] || exit 1
+      if [ "$demo_required" = 0 ] && [ -z "$DEMONSTRATION_RECORD" ]; then
+        echo 'demonstration: register the existing task contract through fm-control before relaunch' >&2
+        exit 1
+      fi
+    elif [ -n "$DEMONSTRATION_PLAN" ]; then
+      demo_meta="$DATA/$ID/.demonstration-intake.meta"
+      printf 'kind=ship\nworktree=%s\nmode=%s\n' "$WT" "$MODE" > "$demo_meta"
+      FM_HOME="$FM_HOME" FM_DATA_OVERRIDE="$DATA" node "$SCRIPT_DIR/fm-demonstration-lib.mjs" initialize "$demo_meta" "$DEMONSTRATION_PLAN" "$demo_meta.next" "$ID" || exit 1
+      rm -f "$demo_meta" "$demo_meta.next"
+      DEMONSTRATION_RECORD="$DATA/$ID/demonstration.json"
+    fi
+  fi
   BRIEF="$DATA/$ID/launch-brief.md"
   BRIEF_TMP="$DATA/$ID/.launch-brief.md.${BASHPID:-$$}"
   {
     fm_brief_worker_role "$STATE" "$ID" "$FM_ROOT" &&
       printf '\n' &&
       cat "$SOURCE_BRIEF" &&
+      { [ -z "$DEMONSTRATION_RECORD" ] || node "$SCRIPT_DIR/fm-demonstration-lib.mjs" brief "$DEMONSTRATION_RECORD"; } &&
       if [ "$MDD_TASK" = 1 ]; then
         fm_dod_mdd_block
       elif [ "$KIND" = ship ] && [ "$MODE" = no-mistakes ]; then
@@ -7429,6 +7488,12 @@ preserve_relaunch_meta() {
     esac
   fi
   echo "kind=$KIND"
+  if [ "$RELAUNCH" = 0 ] && [ -n "$DEMONSTRATION_RECORD" ]; then
+    echo "demonstration=$DEMONSTRATION_RECORD"
+  fi
+  if [ "$RELAUNCH" = 0 ] && [ "$KIND" = ship ] && [ "$MODE" != local-only ]; then
+    if fm_dod_delivery_review_required "$MODE" "${BRIEF_FORGE:-none}"; then echo 'delivery_review_required=1'; fi
+  fi
   [ -z "$MODE" ] || echo "mode=$MODE"
   [ -z "$YOLO" ] || echo "yolo=$YOLO"
   [ -z "${BRANCH:-}" ] || echo "branch=$BRANCH"

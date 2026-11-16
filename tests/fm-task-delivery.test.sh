@@ -268,6 +268,7 @@ test_promote_requires_and_records_the_delivery_contract() {
   expect_code 0 "$status" "a promotion carrying both flags should succeed"
   assert_grep 'kind=ship' "$meta" "promotion did not restore ship teardown protection"
   assert_grep 'mode=direct-PR' "$meta" "promotion did not record the decided delivery mode"
+  assert_grep 'delivery_review_required=1' "$meta" "promotion omitted the delivery examination"
   assert_grep 'yolo=on' "$meta" "promotion did not record the decided merge posture"
   assert_contains "$out" "ship instructions for mode=direct-PR" "promotion hint did not carry the decided mode"
   [ "$(grep -c '^mode=' "$meta")" = 1 ] || fail "promotion left more than one mode= line in the task record"
@@ -411,8 +412,10 @@ STUB
     for contract in "$payload" "$home/data/$id/brief.md"; do
       assert_grep "This replaces the scout rule limiting outside-worktree writes to the report and status file." "$contract" \
         "$mode: $contract retained the scout-only write restriction"
-      assert_grep "Keep project edits inside this worktree; keep proof and scratch output outside it, under \`$home/data/$id/\` or a temporary directory." "$contract" \
+      assert_grep "keep scratch output and temporary captures under \`$home/data/$id/\` or a temporary directory." "$contract" \
         "$mode: $contract omitted the ship scratch-location rule"
+      assert_grep "project-owned durable demonstration evidence inside this worktree" "$contract" \
+        "$mode: $contract prohibited the project's durable evidence archive"
       assert_grep "Outside the worktree, write only that task material and the status and steering-inbox records authorized below." "$contract" \
         "$mode: $contract omitted the ship outside-worktree write boundary"
       assert_grep "Leave the worktree clean before reporting done." "$contract" \
@@ -1975,6 +1978,133 @@ EOF
   pass "fm-project-mode: --branch-prefix resolves order-independently and defaults to the legacy fm/ prefix"
 }
 
+test_classic_delivery_checks_complete_committed_tree() {
+  local home="$TMP_ROOT/common-home" wt="$TMP_ROOT/common-repo" fake="$TMP_ROOT/common-bin" out rc
+  mkdir -p "$home/state" "$wt" "$fake"
+  git -C "$wt" init -qb main
+  git -C "$wt" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm initial --allow-empty
+  git -C "$wt" checkout -qb feature
+  mkdir -p "$wt/.missions/evidence"
+  printf 'raw proof with spaces   \n' > "$wt/.missions/evidence/proof.log"
+  git -C "$wt" add .
+  git -C "$wt" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm candidate
+  printf 'kind=ship\nlifecycle=prepared\nmode=direct-PR\nbranch=feature\nbase_branch=main\nworktree=%s\nproject=%s\n' "$wt" "$wt" > "$home/state/task.meta"
+  printf '#!/usr/bin/env bash\ntouch %s\nexit 98\n' "$fake/node-used" > "$fake/node"
+  chmod +x "$fake/node"
+  out=$(FM_HOME="$home" PATH="$fake:$PATH" bash "$ROOT/bin/fm-control.sh" task delivery-check --stage draft 2>&1); rc=$?
+  expect_code 0 "$rc" "draft should retain the failed check: $out"
+  assert_contains "$out" incomplete 'draft concealed its failed check'
+  assert_contains "$out" whitespace 'draft omitted the actual diagnostic'
+  out=$(FM_HOME="$home" PATH="$fake:$PATH" bash "$ROOT/bin/fm-control.sh" task delivery-check --stage ready 2>&1); rc=$?
+  [ "$rc" -ne 0 ] || fail 'ready ignored invalid committed mission evidence'
+  printf 'compact proof\n' > "$wt/.missions/evidence/proof.log"
+  git -C "$wt" add .
+  git -C "$wt" -c user.name=fixture -c user.email=fixture@example.invalid commit -qm corrected
+  out=$(FM_HOME="$home" PATH="$fake:$PATH" bash "$ROOT/bin/fm-control.sh" task delivery-check --stage ready 2>&1); rc=$?
+  expect_code 0 "$rc" "corrected classic task should be ready: $out"
+  assert_contains "$out" 'stage=ready' 'ready status missing'
+  printf 'uncommitted follow-up\n' >> "$wt/.missions/evidence/proof.log"
+  if out=$(FM_HOME="$home" PATH="$fake:$PATH" bash "$ROOT/bin/fm-control.sh" task delivery-check --stage ready 2>&1); then
+    fail 'ready reused checks after an uncommitted change'
+  fi
+  assert_contains "$out" 'uncommitted' 'ready omitted the changed-content diagnostic'
+
+  assert_absent "$fake/node-used" 'classic task invoked Node or MDD'
+  pass 'classic delivery checks all committed files, retains draft failures, and needs no MDD or Node'
+}
+
+test_registered_delivery_review() {
+  local spec home wt fake out head base report
+  spec=$(make_home delivery-review); IFS='|' read -r home wt fake <<< "$spec"
+  git -C "$wt" branch -M main
+  base=$(git -C "$wt" rev-parse HEAD)
+  git -C "$wt" checkout -qb feature
+  printf 'change\n' > "$wt/feature"
+  git -C "$wt" add .
+  git -C "$wt" -c user.name=test -c user.email=test@example.invalid commit -qm feature
+  head=$(git -C "$wt" rev-parse HEAD)
+  printf 'kind=ship\nmode=direct-PR\nworktree=%s\nproject=%s\nbase_branch=%s\ndelivery_review_required=1\n' "$wt" "$wt" main > "$home/state/task.meta"
+  if out=$(FM_HOME="$home" bash "$ROOT/bin/fm-control.sh" task delivery-check --stage ready 2>&1); then
+    fail 'ready accepted a required delivery examination that never occurred'
+  fi
+  assert_contains "$out" 'delivery review' 'missing examination diagnostic'
+  out=$(FM_HOME="$home" bash "$ROOT/bin/fm-control.sh" task delivery-check --stage draft 2>&1) || fail "$out"
+  assert_contains "$out" 'status=incomplete' 'draft hid its absent examination'
+  printf 'observed evidence\n' > "$home/proof"
+  printf 'Readable PR body\n' > "$home/body.md"
+  mkdir -p "$home/data/task"
+  printf 'Approved scope\n' > "$home/data/task/brief.md"
+  report="$home/report.json"
+  jq -n --arg task task --arg repository "$wt" --arg head "$head" --arg base "$base" --arg body "$home/body.md" --arg proof "$home/proof" '
+    {version:1,task:$task,repository:$repository,head:$head,base:$base,complete:true,outcome:"accepted",examiner:"coordinator",
+    scope:{outcome:"One working result",grouping:"Contract and consumer belong together",dependencies:"No dependent delivery"},
+    risks:{alignment:"Approved result",impact:"Local module",verification:"Focused regression passed",rollback:"Revert the commit",detection:"Caller receives explicit errors"},
+    presentation:{path:$body,rationale:"Short explanation fits this change"},evidence:[$proof]}' > "$report"
+  if out=$(FM_HOME="$home" bash "$ROOT/bin/fm-control.sh" task delivery-review --report "$report" --brief-file "$home/body.md" 2>&1); then fail 'delivery examination ignored an unrelated control option'; fi
+  out=$(FM_HOME="$home" bash "$ROOT/bin/fm-control.sh" task delivery-review --report "$report" 2>&1) || fail "$out"
+  out=$(FM_HOME="$home" bash "$ROOT/bin/fm-control.sh" task delivery-check --stage ready 2>&1) || fail "$out"
+  assert_contains "$out" 'status=verified' 'accepted examination did not unblock delivery'
+  printf 'changed\n' >> "$home/proof"
+  if out=$(FM_HOME="$home" bash "$ROOT/bin/fm-control.sh" task delivery-check --stage ready 2>&1); then fail 'changed evidence retained acceptance'; fi
+  assert_contains "$out" 'delivery review' 'changed evidence diagnostic'
+  printf '#!/bin/sh\nexit 97\n' > "$fake/node"
+  chmod +x "$fake/node"
+  if out=$(FM_HOME="$home" PATH="$fake:$PATH" bash "$ROOT/bin/fm-pr-check.sh" task https://github.com/example/repo/pull/1 2>&1); then fail 'registration ignored the current examination'; fi
+  assert_contains "$out" 'delivery review' 'registration bypassed the examination'
+  assert_no_regex '^pr=' "$home/state/task.meta" 'registration changed task state on refusal'
+  printf 'observed evidence\n' > "$home/proof"
+  jq '.outcome="correction_required"' "$report" > "$report.next"; mv "$report.next" "$report"
+  out=$(FM_HOME="$home" PATH="$fake:$PATH" bash "$ROOT/bin/fm-control.sh" task delivery-review --report "$report" 2>&1) || fail "$out"
+  if out=$(FM_HOME="$home" PATH="$fake:$PATH" bash "$ROOT/bin/fm-control.sh" task delivery-check --stage ready 2>&1); then fail 'a correction verdict unblocked readiness'; fi
+  jq '.outcome="accepted"' "$report" > "$report.next"; mv "$report.next" "$report"
+  out=$(FM_HOME="$home" PATH="$fake:$PATH" bash "$ROOT/bin/fm-control.sh" task delivery-review --report "$report" 2>&1) || fail "$out"
+  out=$(FM_HOME="$home" PATH="$fake:$PATH" bash "$ROOT/bin/fm-control.sh" task delivery-check --stage ready 2>&1) || fail "$out"
+  printf 'follow-up\n' >> "$wt/feature"
+  git -C "$wt" add .
+  git -C "$wt" -c user.name=test -c user.email=test@example.invalid commit -qm follow-up
+  if out=$(FM_HOME="$home" bash "$ROOT/bin/fm-control.sh" task delivery-check --stage ready 2>&1); then fail 'new head reused an old examination'; fi
+  assert_contains "$out" 'stale' 'changed head diagnostic'
+  git -C "$wt" checkout -q "$head"
+  printf 'base_branch=%s\n' "$head" >> "$home/state/task.meta"
+  if out=$(FM_HOME="$home" bash "$ROOT/bin/fm-control.sh" task delivery-check --stage ready 2>&1); then fail 'new base reused an old examination'; fi
+  printf 'base_branch=main\n' >> "$home/state/task.meta"
+  jq '.scope.grouping=""' "$report" > "$report.next"
+  if out=$(FM_HOME="$home" bash "$ROOT/bin/fm-control.sh" task delivery-review --report "$report.next" 2>&1); then fail 'missing grouping rationale was accepted'; fi
+  out=$(FM_HOME="$home" bash "$ROOT/bin/fm-control.sh" task delivery-check --stage ready 2>&1) || fail "failed recording damaged the previous receipt: $out"
+  local previous_meta
+  previous_meta=$(cat "$home/state/task.meta")
+  printf '#!/bin/sh\nexit 73\n' > "$fake/mv"
+  chmod +x "$fake/mv"
+  if out=$(FM_HOME="$home" PATH="$fake:$PATH" bash "$ROOT/bin/fm-control.sh" task delivery-review --report "$report" 2>&1); then fail 'failed publication was reported as recorded'; fi
+  [ "$(cat "$home/state/task.meta")" = "$previous_meta" ] || fail 'failed publication changed task metadata'
+  rm "$fake/mv"
+  out=$(FM_HOME="$home" bash "$ROOT/bin/fm-control.sh" task delivery-check --stage ready 2>&1) || fail "publication failure damaged the previous examination: $out"
+  printf 'Changed scope\n' >> "$home/data/task/brief.md"
+  if out=$(FM_HOME="$home" bash "$ROOT/bin/fm-control.sh" task delivery-check --stage ready 2>&1); then fail 'changed brief retained acceptance'; fi
+  printf 'Approved scope\n' > "$home/data/task/brief.md"
+  printf 'changed presentation\n' >> "$home/body.md"
+  if out=$(FM_HOME="$home" bash "$ROOT/bin/fm-control.sh" task delivery-check --stage ready 2>&1); then fail 'changed presentation retained acceptance'; fi
+  pass 'registered delivery review gates readiness and retains draft and evidence failures'
+}
+
+test_manual_delivery_includes_examination() {
+  local rendered policy
+  . "$ROOT/bin/fm-dod-lib.sh"
+  for policy in auto manual; do
+    rendered=$(fm_dod_block no-mistakes task fm/task none '' '' "$policy") || fail 'rendering failed'
+    assert_contains "$rendered" 'delivery_review_required=1' "manual contract omitted the examination: $policy"
+  done
+  pass 'manual and automatic PR contracts both transmit the examination obligation'
+}
+
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  "$FM_TEST_ONLY"
+  exit $?
+fi
+
+test_manual_delivery_includes_examination
+test_registered_delivery_review
+test_classic_delivery_checks_complete_committed_tree
 test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags
 test_spawn_refuses_a_brief_mode_mismatch

@@ -588,6 +588,7 @@ function makeHost(session) {
     // Pi reads its session through runtimeHost, which a session replacement swaps.
     runtimeHost: { session },
     compactionQueuedMessages: [],
+    pendingBashComponents: [],
     statuses: [],
     warnings: [],
     editorText: "",
@@ -4980,6 +4981,11 @@ JS
   tmux -L "$TMUX_SOCKET" send-keys -t "$TMUX_SESSION" M-s
   pass "Pi calm native E2E replaces the stock working row with a moving, resize-clamped working ship that freezes and resumes across two working periods in one Pi session, clears on abort, keeps captain turns visible, hides exact operational user rows without changing persistence, restores stock rendering Calm-off, survives restart, and preserves export plus Ctrl+O behavior"
 }
+
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  "$FM_TEST_ONLY"
+  exit $?
+fi
 
 test_home_resolution
 test_pi_compat_no_upper_bound

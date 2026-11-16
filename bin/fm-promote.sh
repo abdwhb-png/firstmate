@@ -49,6 +49,7 @@
 # fm_pr_text_valid owns where it is accepted); the ship's Definition of done then
 # carries it.
 # Usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off> [--branch-prefix <prefix>] [--upstream-consent <host>/<owner>/<repo>]
+# --demonstration <plan.json> binds the promoted task's demonstration obligation.
 # --upstream-consent records the captain's one-off approval for this task to
 # publish to firstmate's own upstream repository; promotion applies the same
 # self-repository publication gate as bin/fm-spawn.sh (bin/fm-role-lib.sh), so
@@ -90,6 +91,7 @@ FORGE=none
 PR_TEXT=auto
 UPSTREAM_CONSENT=
 UPSTREAM_CONSENT_SET=0
+DEMONSTRATION_PLAN=
 POS=()
 want_value=
 for a in "$@"; do
@@ -98,6 +100,10 @@ for a in "$@"; do
       --*) echo "error: --$want_value requires a value" >&2; exit 1 ;;
     esac
     case "$want_value" in
+      demonstration)
+        [ -n "$a" ] || { echo 'error: --demonstration requires a value' >&2; exit 1; }
+        DEMONSTRATION_PLAN=$a
+        ;;
       mode) MODE=$a; MODE_SET=1 ;;
       yolo) YOLO=$a; YOLO_SET=1 ;;
       branch-prefix) BRANCH_PREFIX=$a ;;
@@ -107,6 +113,7 @@ for a in "$@"; do
     continue
   fi
   case "$a" in
+    --demonstration) want_value=demonstration ;;
     --mode) want_value=mode ;;
     --mode=*) MODE=${a#--mode=}; MODE_SET=1 ;;
     --yolo) want_value=yolo ;;
@@ -119,6 +126,7 @@ for a in "$@"; do
   esac
 done
 [ -z "$want_value" ] || { echo "error: --$want_value requires a value" >&2; exit 1; }
+fm_dod_demonstration_intake "$DEMONSTRATION_PLAN" || exit 1
 [ "${#POS[@]}" -ge 1 ] || { echo "usage: fm-promote.sh <task-id> --mode <no-mistakes|direct-PR|local-only> --yolo <on|off>" >&2; exit 1; }
 [ "$MODE_SET" -eq 1 ] || {
   echo "error: promotion requires --mode <no-mistakes|direct-PR|local-only>; decide it now from the scout's findings and the project's registered posture in data/projects.md" >&2
@@ -333,7 +341,7 @@ This section supersedes every earlier brief instruction about delivery mode.
 These current ship instructions supersede the scout delivery rules and report-based Definition of done.
 Any earlier "Never push" or scout-only delivery language in this file is superseded.
 This replaces the scout rule limiting outside-worktree writes to the report and status file.
-Keep project edits inside this worktree; keep proof and scratch output outside it, under \`$DATA/$ID/\` or a temporary directory.
+Keep project edits and project-owned durable demonstration evidence inside this worktree; keep scratch output and temporary captures under \`$DATA/$ID/\` or a temporary directory. The task's demonstration contract selects its durable evidence location.
 Outside the worktree, write only that task material and the status and steering-inbox records authorized below.
 Leave the worktree clean before reporting done.
 The mode-specific Definition of done below is the current delivery contract.
@@ -403,10 +411,16 @@ grep -v -e '^kind=' -e '^mode=' -e '^yolo=' -e '^branch=' -e '^upstream_consent=
 {
   echo "kind=ship"
   echo "mode=$MODE"
+  if fm_dod_delivery_review_required "$MODE" "$FORGE"; then echo 'delivery_review_required=1'; fi
   echo "yolo=$YOLO"
   echo "branch=$BRANCH"
   [ -z "$UPSTREAM_CONSENT" ] || echo "upstream_consent=$UPSTREAM_CONSENT"
 } >> "$TMP"
+if [ -n "$DEMONSTRATION_PLAN" ]; then
+  FM_HOME="$FM_HOME" FM_DATA_OVERRIDE="$DATA" node "$SCRIPT_DIR/fm-demonstration-lib.mjs" initialize "$TMP" "$DEMONSTRATION_PLAN" "$TMP.demo" "$ID" || exit 1
+  mv "$TMP.demo" "$TMP" || exit 1
+  node "$SCRIPT_DIR/fm-demonstration-lib.mjs" brief "$DATA/$ID/demonstration.json" >> "$INSTRUCTIONS" || exit 1
+fi
 if ! fm_backlog_atomic_transition publish "$TMP" "$META" "task record" "$STATE"; then
   rm -f -- "$TMP"
   TMP=
