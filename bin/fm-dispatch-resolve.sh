@@ -182,17 +182,17 @@ record_task() {
 }
 resolver_off() {
   echo "dispatch-resolve: off ($1)" >&2
-  record_task off || true
+  record_task off || die "could not record the dispatch resolution"
   exit 0
 }
 no_rules() {
-  record_task escalate || true
+  record_task escalate || die "could not record the dispatch resolution"
   printf 'dispatch-resolve:\n  status: escalate\n  reason: no rules to match\n'
   exit 0
 }
 emit_error() {
   local reason=$1
-  record_task error || true
+  record_task error || die "could not record the dispatch resolution"
   echo "dispatch-resolve: error ($reason)" >&2
   printf 'dispatch-resolve:\n  status: error\n  reason: %s\n' "$reason"
   exit 0

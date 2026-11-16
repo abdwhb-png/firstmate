@@ -373,6 +373,41 @@ test_invalid_preferred_provider() (
   assert_absent "$LOG/quota-axi.calls" 'invalid preference never reads quota'
   pass "invalid preferred_provider: $value"
 )
+test_task_record_publication_failure_is_not_success() (
+  local task_brief="$HOME_DIR/data/storage-failure/brief.md" task_record scenario failure_bin code out err
+  task_record="${task_brief%/*}/dispatch-resolution.json"
+  failure_bin="$TMP_ROOT/failed-publication"
+  mkdir -p "${task_brief%/*}" "$failure_bin"
+  cp "$BRIEF" "$task_brief"
+  printf '#!/usr/bin/env bash\nexit 73\n' > "$failure_bin/mv"
+  chmod +x "$failure_bin/mv"
+  ln -s "$(command -v basename)" "$failure_bin/basename"
+  for scenario in off no_rules error; do
+    printf '{"status":"clear"}\n' > "$task_record"
+    reset_log
+    case "$scenario" in
+      off) run_on_path "$failure_bin:$FAKEBIN:$BASE_PATH" code out err "$task_brief" ;;
+      no_rules)
+        mv "$RULES" "$RULES.keep"
+        TYPESAFE_API_KEY=$KEY run_on_path "$failure_bin:$FAKEBIN:$BASE_PATH" code out err "$task_brief"
+        mv "$RULES.keep" "$RULES"
+        ;;
+      error) TYPESAFE_API_KEY=$KEY run_on_path "$failure_bin:$NO_CURL_BIN" code out err "$task_brief" ;;
+    esac
+    expect_code 2 "$code" "$scenario: failed decision publication must fail explicitly"
+    assert_contains "$err" 'could not write' "$scenario: persistence error must be visible"
+    assert_absent "$task_record" "$scenario: stale selection must not survive"
+    [ -z "$(find "${task_brief%/*}" -name 'dispatch-resolution.json.tmp.*' -print)" ] || fail "$scenario: temporary decision survived"
+    assert_absent "$LOG/argv" "$scenario: failed decision must not contact provider"
+  done
+  pass 'task decision publication failure refuses off, escalation and provider-error outcomes'
+)
+
+if [ "${FM_TEST_ONLY:-}" = test_task_record_publication_failure_is_not_success ]; then
+  test_task_record_publication_failure_is_not_success
+  exit 0
+fi
+test_task_record_publication_failure_is_not_success
 preferred_failures=0
 for value in null false 42 '[]' '{}' '""' '"Codex"' '"codex\\n"' '" codex"'; do
   test_invalid_preferred_provider "$value" || preferred_failures=$((preferred_failures + 1))
