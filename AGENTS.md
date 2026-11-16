@@ -209,6 +209,7 @@ Fill the task subsections according to section 11.
 
 ### Dispatch and supervision handoff
 
+Keep worker dispatch and report arbitration with the supervising firstmate or a chartered secondmate; a review, correction, or unsupported launch does not authorize promoting a ship or scout into a launcher or report-collecting coordinator.
 For MDD missions, follow the integration procedure in `docs/design/fork-mdd.md` and the frozen external skill as the owner of mission rules. FirstMate coordinates and examines results, while one task and worktree hold the successive packets and any fresh dedicated reviewer.
 Spawn only through `bin/fm-spawn.sh` after the profile and backend checks in section 4.
 The spawn must resolve a genuine isolated task worktree distinct from the primary checkout; a failed isolation assertion stops the task.

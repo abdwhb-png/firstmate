@@ -1,0 +1,58 @@
+{
+  "skill_name": "harness-adapters",
+  "evals": [
+    {
+      "id": 1,
+      "name": "direct-review-and-corrections",
+      "prompt": "Read-only evaluation: do not launch agents, invoke a pipeline, or mutate files. Firstmate directly launched an implementation worker with a recorded task and profile. The worker returns its result, asks for an independent review and two corrections, and proposes launching the reviewer and two implementers itself, then collecting their reports. Explain who decides and launches the next assignments and how results return, using the existing task and replacement lifecycle.",
+      "expected_output": "Firstmate examines the result and applicable authority, retains dispatch and report arbitration, and decides the review and corrections under the existing lifecycle without executing them.",
+      "expectations": [
+        "Returns the result and review or correction need to the supervising Firstmate rather than promoting the implementation worker into a launcher or report collector.",
+        "Keeps the recorded task and supported replacement lifecycle; a dedicated reviewer follows confirmed implementer stop and uses fresh context where required by the existing contract.",
+        "Preserves the applicable profile and authority, and follows the supervisor's emitted supervision protocol for subsequent results and blockers.",
+        "Does not launch an agent, invoke a pipeline, or mutate files during the evaluation."
+      ],
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "unsupported-dispatch",
+      "prompt": "Read-only evaluation: do not launch agents, invoke a pipeline, or mutate files. A task explicitly requests a concrete backend, harness, model and account. The launch owner refuses that backend as unsupported for this task. No alternate route has been authorized. The worker offers to use its native tools to launch another implementer and relay the report. Explain the response, distinguishing this refusal from the existing documented fallback for a static unverified runtime configuration.",
+      "expected_output": "Expose the concrete refusal, retain supervisor ownership and the requested profile, and state the fallback decision still needed. Preserve existing authorized fallback rules without using an intermediary to bypass the refusal.",
+      "expectations": [
+        "Reports the unsupported-backend refusal concretely and does not silently switch backend, harness, model, or account.",
+        "Rejects the worker's intermediary-launch proposal and keeps dispatch and report arbitration with the authorized supervisor.",
+        "Uses only an already authorized fallback; with none for this task, identifies the decision needed before continuing.",
+        "Preserves the router's documented static unverified-runtime fallback without treating it as authority to override this task's explicit request.",
+        "Does not launch an agent, invoke a pipeline, or mutate files during the evaluation."
+      ],
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "classic-project",
+      "prompt": "Read-only evaluation: do not launch agents, invoke a pipeline, or mutate files. A project does not use MDD. Firstmate has directly launched a worker under an ordinary recorded task and existing brief. The worker returns a blocker and asks to recruit another implementer to resolve it. Explain who owns the next launch and return, including what survives an interruption before acknowledgement.",
+      "expected_output": "Use the existing brief, task records and supervision protocol, with Firstmate owning the next assignment and return. Keep MDD optional and unacknowledged events durable.",
+      "expectations": [
+        "Keeps dispatch and report arbitration with Firstmate even though the project does not use MDD; the worker returns the blocker to that supervisor.",
+        "Uses the existing brief and task records without inventing an MDD mission contract, new journal, task schema, or supervision engine.",
+        "Follows the emitted supervision protocol, preserves task attribution for results and blockers, and acknowledges only after handling so interrupted work remains replayable.",
+        "Does not launch an agent, invoke a pipeline, or mutate files during the evaluation."
+      ],
+      "files": []
+    },
+    {
+      "id": 4,
+      "name": "authorized-assistance",
+      "prompt": "Read-only evaluation: do not launch agents, invoke a pipeline, or mutate files. A registered secondmate has a charter covering the assigned project and is supervising its recorded worker. The user explicitly authorized that worker to consult a specialist for a bounded analysis, without authorizing other implementation delegation. The worker now also asks to launch two implementers and collect their reports. Explain what remains authorized and who decides the next assignments.",
+      "expected_output": "Preserve the chartered secondmate's supervision and the explicitly authorized specialist consultation within scope. Return the broader implementation request to that secondmate for dispatch and report arbitration.",
+      "expectations": [
+        "Recognizes the secondmate whose charter actually covers the work as the supervising dispatch and report owner, without requiring Firstmate to take over that secondmate's child tree.",
+        "Preserves the explicitly authorized specialist assistance within its bounded scope instead of imposing a blanket ban on assistance.",
+        "Does not infer general implementation delegation or report-collection authority from that consultation; the supervising secondmate examines the request and decides supported assignments under existing authority.",
+        "Preserves applicable profiles and charter boundaries and does not launch an agent, invoke a pipeline, or mutate files during the evaluation."
+      ],
+      "files": []
+    }
+  ]
+}

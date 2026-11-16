@@ -20,6 +20,10 @@ The inherited dispatch file applies the same best-fit profiles there.
 `../../../bin/fm-spawn.sh` owns launch, autonomy, concrete flags, task-kind compatibility, and worker turn-end wiring.
 Natural-language rules stay with firstmate, while scripts receive concrete axes.
 
+When a worker returns a review or correction need, examine its result and the applicable authority, then choose and launch the next supported assignment as the supervising firstmate or the secondmate whose charter covers that work. Keep dispatch and report arbitration with that supervisor through the existing task and replacement lifecycle; a technical request does not authorize the worker to launch other implementers or collect their reports. Preserve explicitly authorized specialized assistance within its granted scope, without transferring coordination implicitly. `../../../AGENTS.md` sections 7 and 8 own authority and supervision.
+
+When a requested launch is refused, report the concrete refusal and use only a fallback already authorized by the existing rules, including the router's static unverified-runtime fallback. Preserve the applicable profile and authority; never silently change the backend, harness, model, or account, or bypass the refusal by turning the worker into an intermediary launcher. If proceeding requires a new fallback decision, state that decision and wait for the needed authority.
+
 `../../../bin/fm-busy-lib.sh` owns semantic busy trust.
 Composer shapes, glyphs, placeholders, popups, rendered delivery signals, and the `empty` / `pending` / `pending-unproven` / `unknown` decision belong only to `../../../bin/fm-composer-lib.sh`.
 Tool references record empirical knowledge for those executable owners.
