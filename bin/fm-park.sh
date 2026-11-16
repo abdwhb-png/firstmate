@@ -7,7 +7,7 @@
 #   fm-park.sh gate <task-id> [--expect-head <sha>]
 #   fm-park.sh park <task-id>
 #   fm-park.sh resume <task-id> --trigger <text>
-#   fm-park.sh land <task-id> [--if-eligible] [--detach]
+#   fm-park.sh land <task-id> [--if-eligible] [--detach] [--queue] [--expected-pr <url>]
 #   fm-park.sh tick
 #   fm-park.sh list
 #   fm-park.sh run <task-id> park|resume|land [<args>...]   (internal)
@@ -86,9 +86,10 @@
 # --detach it starts the land as a detached action (below), prints "automatic
 # cleanup started", and returns at once; with --queue it only saves the request.
 # The request (state/<id>.review-park-land) records the merged PR as pr=, and
-# a land holding the lane lock drops a request whose pr= is not the lane's
-# current pr= without acting, so a stale request never tears down a lane that
-# has moved on to another PR. Only the detached cleanup removes its request,
+# --expected-pr binds queueing, detachment, and teardown to the observed PR.
+# Teardown rechecks that identity under its metadata lock; obsolete requests
+# are removed without consuming a replacement request.
+# Only the detached cleanup removes its request,
 # after its outcome report is saved (teardown leaves it), so a cleanup killed
 # mid-teardown is retried; a request whose task record is gone is dropped by
 # the tick. bin/fm-watch.sh runs
@@ -694,34 +695,61 @@ land_eligible() {  # <id>
   [ -e "$(record_path "$1")" ] || [ -e "$CONFIG/auto-land" ]
 }
 
+remove_land_request() {
+  local id=$1 pr=$2 lock rc=0
+  lock=$(fm_meta_lock_path "$STATE/$id.meta") || return 1
+  fm_lock_acquire_wait "$lock" || return 1
+  if [ "$(fm_meta_get "$STATE/$id.review-park-land" pr)" = "$pr" ]; then
+    rm -f -- "$STATE/$id.review-park-land" || rc=1
+  fi
+  fm_lock_release "$lock" || rc=1
+  return "$rc"
+}
+
 cmd_land() {
-  local id=${1-} eligible=0 detach=0 queue=0 pr out rc=0 why tmp
-  task_id_ok "$id" || die "usage: fm-park.sh land <task-id> [--if-eligible] [--detach] [--queue]" 2
+  local id=${1-} eligible=0 detach=0 queue=0 pr out rc=0 why tmp expected_pr= meta_lock
+  local teardown_args=()
+  task_id_ok "$id" || die "usage: fm-park.sh land <task-id> [--if-eligible] [--detach] [--queue] [--expected-pr <url>]" 2
   shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --if-eligible) eligible=1 ;;
       --detach) detach=1 ;;
       --queue) queue=1 ;;
-      *) die "usage: fm-park.sh land <task-id> [--if-eligible] [--detach] [--queue]" 2 ;;
+      --expected-pr)
+        [ "$#" -ge 2 ] && fm_pr_url_parse "$2" || die "--expected-pr requires a canonical PR URL" 2
+        expected_pr=$2
+        shift
+        ;;
+      *) die "usage: fm-park.sh land <task-id> [--if-eligible] [--detach] [--queue] [--expected-pr <url>]" 2 ;;
     esac
     shift
   done
   [ "$eligible" = 0 ] || land_eligible "$id" || return 0
   [ -f "$STATE/$id.meta" ] || return 0
   if [ "$queue" = 1 ] || [ "$detach" = 1 ]; then
+    meta_lock=$(fm_meta_lock_path "$STATE/$id.meta") || return 1
+    fm_lock_acquire_wait "$meta_lock" || return 1
+    LOCKS_HELD="$LOCKS_HELD $meta_lock"
+    pr=$(fm_meta_get "$STATE/$id.meta" pr)
+    [ -n "$expected_pr" ] || expected_pr=$pr
+    [ "$pr" = "$expected_pr" ] || return 0
     tmp=$(mktemp "$STATE/.review-park.XXXXXX") || die "cannot create cleanup request"
-    if ! { printf 'pr=%s\n' "$(fm_meta_get "$STATE/$id.meta" pr)" > "$tmp" && chmod 0600 "$tmp" \
+    if ! { printf 'pr=%s\n' "$expected_pr" > "$tmp" && chmod 0600 "$tmp" \
       && mv -f -- "$tmp" "$STATE/$id.review-park-land"; }; then
       rm -f -- "$tmp"
       die "cannot publish cleanup request"
     fi
+    fm_lock_release "$meta_lock" || return 1
+    LOCKS_HELD=${LOCKS_HELD%" $meta_lock"}
     [ "$detach" = 1 ] || return 0
-    action_start "$id" land
+    action_start "$id" land --expected-pr "$expected_pr"
     printf 'automatic cleanup started\n'
     return 0
   fi
-  pr=$(fm_meta_get "$STATE/$id.meta" pr)
+  [ -n "$expected_pr" ] || expected_pr=$(fm_meta_get "$STATE/$id.review-park-land" pr)
+  [ -n "$expected_pr" ] || expected_pr=$(fm_meta_get "$STATE/$id.meta" pr)
+  pr=$expected_pr
   # A park or relaunch under way finishes first; each is bounded by the same
   # backstop, so this wait is too.
   if ! fm_lock_acquire_wait_max "$(lane_lock "$id")" "$ACTION_SECS"; then
@@ -730,13 +758,13 @@ cmd_land() {
   fi
   LOCKS_HELD="$LOCKS_HELD $(lane_lock "$id")"
   [ -f "$STATE/$id.meta" ] || return 0
-  pr=$(fm_meta_get "$STATE/$id.meta" pr)
-  if [ -e "$STATE/$id.review-park-land" ] \
-    && [ "$(fm_meta_get "$STATE/$id.review-park-land" pr)" != "$pr" ]; then
-    rm -f -- "$STATE/$id.review-park-land"
+  if [ "$(fm_meta_get "$STATE/$id.meta" pr)" != "$expected_pr" ]; then
+    remove_land_request "$id" "$expected_pr"
     return 0
   fi
-  out=$(FM_HOME=$FM_HOME fm_run_timed "$ACTION_SECS" "$TEARDOWN_BIN" "$id" 2>&1) || rc=$?
+  teardown_args=("$id")
+  [ -z "$expected_pr" ] || teardown_args+=(--expected-pr "$expected_pr")
+  out=$(FM_HOME=$FM_HOME fm_run_timed "$ACTION_SECS" "$TEARDOWN_BIN" "${teardown_args[@]}" 2>&1) || rc=$?
   case "$rc" in
     0) printf 'cleaned up %s: PR %s merged; lane torn down and its working copy returned\n' "$id" "$pr" ;;
     4)
@@ -754,17 +782,28 @@ cmd_land() {
 # --- detached action -------------------------------------------------------
 
 cmd_run() {
-  local id=${1-} verb=${2-} out
+  local id=${1-} verb=${2-} out land_pr= arg previous=
   task_id_ok "$id" || die "usage: fm-park.sh run <task-id> park|resume|land [<args>...]" 2
   case "$verb" in park|resume|land) ;; *) die "usage: fm-park.sh run <task-id> park|resume|land [<args>...]" 2 ;; esac
   shift 2
+  if [ "$verb" = land ]; then
+    for arg in "$@"; do
+      [ "$previous" != --expected-pr ] || land_pr=$arg
+      previous=$arg
+    done
+    if [ -z "$land_pr" ]; then
+      land_pr=$(fm_meta_get "$STATE/$id.review-park-land" pr)
+      [ -n "$land_pr" ] || land_pr=$(fm_meta_get "$STATE/$id.meta" pr)
+      [ -z "$land_pr" ] || set -- "$@" --expected-pr "$land_pr"
+    fi
+  fi
   out=$( LOCKS_HELD=; trap release_locks EXIT; "cmd_$verb" "$id" "$@" 2>/dev/null ) || true
   if [ -n "$out" ]; then
     case "$out" in *"another lifecycle action is already running"*|*"another park action still holds"*) return 0 ;; esac
     report_write "$id" "$out" || return 1
-    [ "$verb" != land ] || rm -f -- "$STATE/$id.review-park-land"
+    [ "$verb" != land ] || remove_land_request "$id" "$land_pr"
   elif [ "$verb" = land ] && [ ! -e "$STATE/$id.meta" ]; then
-    rm -f -- "$STATE/$id.review-park-land"
+    remove_land_request "$id" "$land_pr"
   fi
 }
 
@@ -884,7 +923,7 @@ cmd_tick() {
     [ -e "$rec" ] || continue
     id=$(basename "$rec" .review-park-land)
     fm_pr_task_id_valid "$id" && [ -f "$STATE/$id.meta" ] || { rm -f -- "$rec"; continue; }
-    lane_busy "$id" || action_start "$id" land
+    lane_busy "$id" || action_start "$id" land --expected-pr "$(fm_meta_get "$rec" pr)"
   done
   for rec in "$STATE"/*.review-park; do
     [ -e "$rec" ] || continue

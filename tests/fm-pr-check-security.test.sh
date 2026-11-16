@@ -4345,7 +4345,7 @@ test_self_merged_lane_is_still_cleaned_up_by_the_poll() {
     "self-merge-cleanup: the absorbed duplicate did not fall through to the next check"
   assert_poll_absent "$state" task-a
   for _ in $(seq 1 200); do compgen -G "$state/.review-park-report-*" >/dev/null && break; sleep 0.1; done
-  [ "$(cat "$dir/teardown.log" 2>/dev/null)" = task-a ] \
+  [ "$(cat "$dir/teardown.log" 2>/dev/null)" = "task-a --expected-pr $url" ] \
     || fail "self-merge-cleanup: the poll did not clean up the self-merged lane: $(cat "$dir/teardown.log" 2>/dev/null)"
   FM_HOME="$dir/home" "$ROOT/bin/fm-park.sh" tick >"$dir/tick.out" 2>&1 \
     || fail "self-merge-cleanup: the reporting tick failed: $(cat "$dir/tick.out")"
@@ -5661,6 +5661,70 @@ SH
   fm_pr_poll_artifacts_valid "$state" task-a "$POLL" || fail "released watcher did not strictly authenticate the poll"
   pass "device re-record publication waits without rewriting its registration"
 }
+
+
+test_merged_poll_cleanup_does_not_follow_rearmed_pr() {
+  local dir state url_a=https://github.com/o/r/pull/7 url_b=https://github.com/o/r/pull/8 watch_pid barrier
+  dir=$(make_case merged-poll-rearm-cleanup)
+  add_stop_custom_check "$dir"
+  state="$dir/home/state"
+  rm -f "$dir/home/config/pr-degraded-watch"
+  : > "$dir/home/config/auto-land"
+  write_task_meta "$dir" task-a
+  run_check_entry "$dir" task-a "$url_a" >"$dir/arm-a.out" 2>"$dir/arm-a.err" || fail 'could not arm original PR'
+  retire_contributions_observer "$dir"
+  run_watcher_bounded "$dir/home" "$dir/fakebin" >"$dir/recovery.out" 2>"$dir/recovery.err" || fail 'recovery failed'
+  ack_watcher_cycle "$state" || fail 'recovery acknowledgement failed'
+  rm -f "$state/.last-check"
+  mv "$dir/fakebin/gh" "$dir/fakebin/gh.fixture"
+  cat > "$dir/fakebin/gh" <<'SH'
+#!/usr/bin/env bash
+if [ "${FM_TEST_REARM_WATCH:-0}" = 1 ]; then
+  case " $* " in
+    *" --json state --jq "*)
+      printf 'poll-held\n' > "$FM_TEST_REARM_DIR/poll.started"
+      IFS= read -r release < "$FM_TEST_REARM_DIR/poll.release"
+      printf 'MERGED\n'
+      exit 0 ;;
+  esac
+fi
+exec "$FM_TEST_REARM_DIR/fakebin/gh.fixture" "$@"
+SH
+  cat > "$dir/teardown.probe" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$FM_TEST_REARM_DIR/teardown.called"
+printf 'Torn down %s\n' "$1"
+SH
+  chmod +x "$dir/fakebin/gh" "$dir/teardown.probe"
+  mkfifo "$dir/poll.started" "$dir/poll.release"
+  exec 7<>"$dir/poll.started" 8<>"$dir/poll.release"
+  FM_TEST_REARM_DIR="$dir" FM_TEST_REARM_WATCH=1 FM_PARK_TEARDOWN_BIN="$dir/teardown.probe" \
+    run_watcher_bounded "$dir/home" "$dir/fakebin" >"$dir/watch.out" 2>"$dir/watch.err" &
+  watch_pid=$!
+  IFS= read -r -t 20 barrier <&7 || fail 'original poll did not reach forge barrier'
+  [ -d "$state/.control-task-a.lock" ] || fail 'poll did not hold its control lock'
+  FM_TEST_REARM_DIR="$dir" run_check_entry "$dir" task-a "$url_b" >"$dir/arm-b.out" 2>"$dir/arm-b.err" || fail 'replacement PR registration failed'
+  printf 'release\n' >&8
+  wait "$watch_pid" || fail "watcher failed: $(cat "$dir/watch.err")"
+  exec 7>&- 8>&-
+  for _ in $(seq 1 200); do
+    [ -e "$state/task-a.review-park-land" ] || break
+    sleep 0.05
+  done
+  [ ! -e "$dir/teardown.called" ] || fail 'merged original PR dispatched cleanup of the replacement PR'
+  [ ! -e "$state/task-a.review-park-land" ] || fail 'stale cleanup request survived'
+  fm_pr_poll_artifacts_valid "$state" task-a "$POLL" || fail 'replacement PR poll was damaged'
+  [ "$FM_PR_META_URL" = "$url_b" ] || fail 'replacement PR identity changed'
+  [ -d "$dir/wt" ] || fail 'replacement worktree disappeared'
+  pass 'a merged poll cannot clean up the task after its PR registration changes'
+}
+
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  "$FM_TEST_ONLY"
+  exit 0
+fi
+
+test_merged_poll_cleanup_does_not_follow_rearmed_pr
 
 test_parser_matrix
 test_github_enterprise_config_resolution

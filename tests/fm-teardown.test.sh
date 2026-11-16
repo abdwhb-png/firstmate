@@ -1120,6 +1120,26 @@ test_refresh_never_prunes_a_dropped_branch() {
   pass "the refresh keeps a dropped branch's tracking ref even with fetch.prune set"
 }
 
+test_expected_pr_preserves_replacement_and_allows_matching_cleanup() {
+  local case_dir rc url=https://github.com/example/repo/pull/8
+  case_dir=$(make_case expected-pr-identity)
+  write_meta "$case_dir" local-only ship
+  wt_commit_file "$case_dir" feature.txt pushed
+  git -C "$case_dir/wt" push -q origin fm/task-x1
+  printf 'pr=%s\n' "$url" >> "$case_dir/state/task-x1.meta"
+  cp "$case_dir/state/task-x1.meta" "$case_dir/meta.before"
+  rc=0
+  run_teardown "$case_dir" --expected-pr https://github.com/example/repo/pull/7 > "$case_dir/stdout" 2> "$case_dir/stderr" || rc=$?
+  expect_code 1 "$rc" 'stale merged PR must refuse cleanup of its replacement'
+  assert_grep 'REFUSED: task task-x1 PR changed' "$case_dir/stderr" 'stale cleanup must name the identity conflict'
+  cmp -s "$case_dir/meta.before" "$case_dir/state/task-x1.meta" || fail 'stale cleanup changed metadata'
+  [ -d "$case_dir/wt" ] || fail 'stale cleanup removed replacement worktree'
+  [ ! -e "$case_dir/state/.control-task-x1.lock" ] || fail 'stale cleanup retained control lock'
+  run_teardown "$case_dir" --expected-pr "$url" > "$case_dir/matching.out" 2> "$case_dir/matching.err" || fail "matching cleanup refused: $(cat "$case_dir/matching.err")"
+  [ ! -e "$case_dir/state/task-x1.meta" ] || fail 'matching cleanup retained metadata'
+  pass 'expected PR refuses stale cleanup and permits matching landed work'
+}
+
 test_reachable_work_needs_no_fetch() {
   local case_dir rc
   case_dir=$(make_case reachable-no-fetch)
@@ -5938,6 +5958,13 @@ test_retained_sources_still_reach_the_ordinary_refusal() {
     "retained-sources: the ordinary refusal was replaced"
   pass "present required sources still reach the ordinary teardown refusal"
 }
+
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  "$FM_TEST_ONLY"
+  exit 0
+fi
+
+test_expected_pr_preserves_replacement_and_allows_matching_cleanup
 
 test_teardown_preserves_opencode_busy_plugin_on_pool_return
 

@@ -978,7 +978,7 @@ test_land_requires_opt_in_but_always_cleans_parked() {
   : > "$w/config/auto-land"
   out=$(run_park "$w" land lane --if-eligible 2>&1)
   [ "$out" = "cleaned up lane: PR $GH_URL merged; lane torn down and its working copy returned" ] || fail "land: $out"
-  [ "$(cat "$w/teardown.log")" = lane ] || fail "land: teardown was not called exactly once without --force: $(cat "$w/teardown.log")"
+  [ "$(cat "$w/teardown.log")" = "lane --expected-pr $GH_URL" ] || fail "land: teardown was not called exactly once without --force: $(cat "$w/teardown.log")"
 
   w=$(make_world land-parked "$GH_URL"); gh_fixture "$w/gh.1.json"; park_world "$w"
   : > "$w/teardown.refuse"
@@ -1042,7 +1042,7 @@ test_detached_land_returns_at_once_and_the_tick_reports_it() {
   [ ! -e "$w/teardown.log" ] || fail "land-detached: teardown completed before release"
   : > "$w/teardown.release"
   wait_land_settled "$w" land-detached
-  [ "$(cat "$w/teardown.log")" = lane ] || fail "land-detached: teardown calls: $(cat "$w/teardown.log")"
+  [ "$(cat "$w/teardown.log")" = "lane --expected-pr $GH_URL" ] || fail "land-detached: teardown calls: $(cat "$w/teardown.log")"
   out=$(run_park "$w" tick 2>&1)
   [ "$out" = "cleaned up lane: PR $GH_URL merged; lane torn down and its working copy returned" ] || fail "land-detached: report: $out"
   out=$(run_park "$w" tick 2>&1)
@@ -1182,6 +1182,29 @@ test_stale_cleanup_request_for_another_pr_is_dropped() {
 
 # The tick records its wake before it removes the reports behind it, so a
 # failed record loses nothing: the reports stay for the next tick.
+test_cleanup_report_preserves_a_replacement_request() {
+  local w replacement
+  w=$(make_world land-replaced-request "$GH_URL")
+  : > "$w/config/auto-land"
+  replacement="${GH_URL%/*}/8"
+  run_park "$w" land lane --queue --expected-pr "$GH_URL" || fail 'could not queue original cleanup'
+  cat > "$w/fakebin/mv" <<SH
+#!/usr/bin/env bash
+"$(command -v mv)" "\$@" || exit \$?
+case "\${!#}" in
+  "$w/state/.review-park-report-"*)
+    sed -i.bak 's#^pr=.*#pr=$replacement#' "$w/state/lane.meta"
+    rm -f "$w/state/lane.meta.bak"
+    "$PARK" land lane --queue --expected-pr "$replacement" || exit 1
+    ;;
+esac
+SH
+  chmod +x "$w/fakebin/mv"
+  run_park "$w" run lane land --expected-pr "$GH_URL" || fail 'original cleanup did not settle'
+  grep -qx "pr=$replacement" "$w/state/lane.review-park-land" || fail 'original cleanup consumed its replacement request'
+  pass 'reporting an old cleanup preserves a newer queued PR identity'
+}
+
 test_reports_survive_until_their_wake_is_recorded() {
   local w out report
   w=$(make_world report-durable "$GH_URL")
@@ -1260,5 +1283,6 @@ fm_test_run \
   test_pending_land_retries_after_control_lock_refusal \
   test_killed_cleanup_is_retried_and_reported_once \
   test_stale_cleanup_request_for_another_pr_is_dropped \
+  test_cleanup_report_preserves_a_replacement_request \
   test_reports_survive_until_their_wake_is_recorded \
   test_land_waits_for_an_action_under_way
