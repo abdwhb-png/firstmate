@@ -14,9 +14,9 @@ set -u
 # portable regression pass locally while failing on a harness-free CI runner.
 if [ "${FM_SESSIONSTART_TEST_HARNESS:-0}" != 1 ]; then
   HARNESS_FIXTURE=$(mktemp -d "${TMPDIR:-/tmp}/fm-sessionstart-harness.XXXXXX") || exit 1
-  ln -s /bin/bash "$HARNESS_FIXTURE/codex" || exit 1
+  ln -s /bin/bash "$HARNESS_FIXTURE/${FM_SESSIONSTART_FIXTURE_NAME:-codex}" || exit 1
   # shellcheck disable=SC2016 # Expand in the fixture shell, not this parent.
-  FM_SESSIONSTART_TEST_HARNESS=1 "$HARNESS_FIXTURE/codex" \
+  FM_SESSIONSTART_TEST_HARNESS=1 "$HARNESS_FIXTURE/${FM_SESSIONSTART_FIXTURE_NAME:-codex}" \
     -c '"$@"; rc=$?; :; exit "$rc"' _ "$0" "$@"
   HARNESS_STATUS=$?
   rm -rf "$HARNESS_FIXTURE"
@@ -1114,6 +1114,10 @@ test_native_codex_hook_selects_codex_protocol() {
   pass "native Codex hook delivers its complete digest with the Codex protocol"
 }
 
+run_pi_fixture_case() {
+  FM_SESSIONSTART_TEST_HARNESS=0 FM_SESSIONSTART_FIXTURE_NAME=pi FM_TEST_ONLY="$1" bash "$0"
+}
+
 if [ -n "${FM_TEST_ONLY:-}" ]; then
   fm_test_run "$FM_TEST_ONLY"
   exit $?
@@ -1131,8 +1135,8 @@ test_opencode_plugin_delivers_exact_nudge_once
 test_run_startup_runs_the_full_digest
 test_native_codex_hook_selects_codex_protocol
 test_run_clear_and_compact_reemit
-test_run_rebuild_forwards_source_to_drifted_instruction_refresh
-test_run_compact_without_completion_refreshes_before_finishing_startup
+run_pi_fixture_case test_run_rebuild_forwards_source_to_drifted_instruction_refresh
+run_pi_fixture_case test_run_compact_without_completion_refreshes_before_finishing_startup
 test_run_clear_without_completion_finishes_startup
 test_run_clear_rejects_previous_owner_completion
 test_run_resume_delegates_to_the_nudge
