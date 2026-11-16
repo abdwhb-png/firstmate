@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, '*\+fork-*']
+    branches: [main, '*fork-*']
   pull_request:
-    branches: [main, '*\+fork-*']
+    branches: [main, '*fork-*']
     # labeled lets the full-ci go-ahead start the full suite; see the
     # outside pull request gate below.
     types: [opened, synchronize, reopened, labeled]
