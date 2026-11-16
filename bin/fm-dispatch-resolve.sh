@@ -110,7 +110,8 @@
 #   escalate  -> the rule requires captain approval, no candidate is rankable, or a genuine tie
 #   error     -> API, network, response, quota-axi, or declared credential source failure; decide as today
 #   Every outcome exits 0 so an intake is never blocked by this tool.
-#   Exit 2 only for a usage or configuration error (unreadable brief, an
+#   Exit 2 for usage, configuration, or required task-record persistence errors
+#   (unreadable brief, an
 #   existing unreadable rules file, malformed rules, an unreadable or invalid
 #   credential source declaration, missing jq, an unknown provider, a selected
 #   non-typesafe provider without a model, an invalid TYPESAFE_BASE, or systemone
