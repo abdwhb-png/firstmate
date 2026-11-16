@@ -364,7 +364,7 @@ for control_arg in "$@"; do
     --report) control_want_value=report ;;
     --result) control_want_value=result ;;
     --role) control_want_value=role ;;
-    --brief-file) control_want_value=brief-file ;;
+    --brief-file) control_want_value='brief-file' ;;
     --authority) control_want_value=authority ;;
     --harness) control_want_value=harness ;;
     --harness=*) NEW_HARNESS=${control_arg#--harness=}; HARNESS_SET=1 ;;

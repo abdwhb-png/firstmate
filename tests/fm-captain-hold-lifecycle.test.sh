@@ -3590,12 +3590,18 @@ test_local_merge_entrypoint_refuses_a_captain_held_task() {
 }
 
 test_pr_merge_entrypoint_separates_an_unreadable_record_from_an_absent_one() {
-  local home id pr rc merge_count
+  local home id pr rc merge_count repo wt
   home=$(make_home missing-pr-authority-record)
   configure_merged_github "$home"
   id=sample-missing-pr-authority
   pr=https://github.com/sample/sample/pull/43
-  write_origin_meta "$home" "$id" ship
+  repo="$home/projects/sample"
+  wt="$home/projects/worktree-$id"
+  fm_git_worktree "$repo" "$wt" "fm/$id"
+  git -C "$wt" fetch --quiet origin
+  fm_write_meta "$home/state/$id.meta" \
+    "window=firstmate:fm-$id" "worktree=$wt" "project=$repo" \
+    "harness=codex" "kind=ship" "mode=direct-PR" "spawn_gen=fixture-$id"
 
   # A backlog that exists but cannot be read may hide a live captain hold, so
   # the merge must refuse without reaching the forge.
@@ -3607,7 +3613,7 @@ test_pr_merge_entrypoint_separates_an_unreadable_record_from_an_absent_one() {
   chmod 644 "$home/data/backlog.md"
   [ "$rc" -ne 0 ] || fail "the PR merge entrypoint accepted an unreadable captain-hold authority record"
   assert_grep "could not determine whether task $id is still held for the captain" "$home/missing-pr.err" \
-    "the PR merge refusal did not name its unreadable authority record"
+    "the PR merge refusal did not name its unreadable authority record: $(cat "$home/missing-pr.err")"
   assert_no_grep 'pr merge 43 ' "$home/gh.log" \
     "the PR merge entrypoint reached the forge without a readable authority record"
 
@@ -5093,6 +5099,12 @@ EOF
     || fail "teardown refused a scout whose answered call was archived to the user-configured location: $(cat "$home/userconfig-teardown.err")"
   pass "an answered captain call archived to a user-configured location still satisfies the completion gate"
 }
+
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  "$FM_TEST_ONLY"
+  exit $?
+fi
+
 
 test_hold_reason_round_trips_awkward_characters
 test_hold_origins_follow_backend_holds
