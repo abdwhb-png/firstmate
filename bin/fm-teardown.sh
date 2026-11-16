@@ -555,7 +555,10 @@ while [ "$#" -gt 0 ]; do
     --force) FORCE=--force ;;
     --legacy-record) LEGACY_RECORD_GIVEN=1 ;;
     --expected-pr)
-      [ "$#" -ge 2 ] && fm_pr_url_parse "$2" || { echo "error: --expected-pr requires a canonical PR URL" >&2; exit 2; }
+      if [ "$#" -lt 2 ] || ! fm_pr_url_parse "$2"; then
+        echo "error: --expected-pr requires a canonical PR URL" >&2
+        exit 2
+      fi
       EXPECTED_PR=$2
       shift
       ;;

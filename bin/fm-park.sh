@@ -707,7 +707,7 @@ remove_land_request() {
 }
 
 cmd_land() {
-  local id=${1-} eligible=0 detach=0 queue=0 pr out rc=0 why tmp expected_pr= meta_lock
+  local id=${1-} eligible=0 detach=0 queue=0 pr out rc=0 why tmp expected_pr='' meta_lock
   local teardown_args=()
   task_id_ok "$id" || die "usage: fm-park.sh land <task-id> [--if-eligible] [--detach] [--queue] [--expected-pr <url>]" 2
   shift
@@ -717,7 +717,9 @@ cmd_land() {
       --detach) detach=1 ;;
       --queue) queue=1 ;;
       --expected-pr)
-        [ "$#" -ge 2 ] && fm_pr_url_parse "$2" || die "--expected-pr requires a canonical PR URL" 2
+        if [ "$#" -lt 2 ] || ! fm_pr_url_parse "$2"; then
+          die "--expected-pr requires a canonical PR URL" 2
+        fi
         expected_pr=$2
         shift
         ;;
@@ -782,7 +784,7 @@ cmd_land() {
 # --- detached action -------------------------------------------------------
 
 cmd_run() {
-  local id=${1-} verb=${2-} out land_pr= arg previous=
+  local id=${1-} verb=${2-} out land_pr='' arg previous=
   task_id_ok "$id" || die "usage: fm-park.sh run <task-id> park|resume|land [<args>...]" 2
   case "$verb" in park|resume|land) ;; *) die "usage: fm-park.sh run <task-id> park|resume|land [<args>...]" 2 ;; esac
   shift 2

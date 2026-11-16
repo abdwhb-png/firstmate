@@ -55,6 +55,7 @@ cp "$ROOT/bin/fm-remote-job-lib.sh" "$ROOT/bin/fm-remote-job-worker.sh" \
   "$ROOT/bin/fm-wake-lib.sh" "$ROOT/bin/fm-path-lib.sh" "$ROOT/bin/fm-marker-lib.sh" \
   "$ROOT/bin/fm-operational-input.sh" "$ROOT/bin/fm-tmux-lib.sh" \
   "$ROOT/bin/fm-agent-process-lib.sh" "$ROOT/bin/fm-session-lock-lib.sh" \
+  "$ROOT/bin/fm-omp-process-lib.sh" \
   "$ROOT/bin/fm-gemini-lib.sh" \
   "$ROOT/bin/fm-hermes-process-lib.sh" \
   "$ROOT/bin/fm-composer-lib.sh" "$ROOT/bin/fm-cursor-lib.sh" \
