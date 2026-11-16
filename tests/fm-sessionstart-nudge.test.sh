@@ -1094,6 +1094,30 @@ test_run_reports_a_failed_session_start_as_digest_text() {
   pass "run wrapper: a session start that cannot take the lock still opens the session and says so"
 }
 
+test_native_codex_hook_selects_codex_protocol() {
+  local root="$TMP_ROOT/native-codex-hook" hook out
+  make_run_primary "$root"
+  rmdir "$root/bin"
+  ln -s "$ROOT/bin" "$root/bin"
+  mkdir -p "$root/.codex"
+  cp "$ROOT/.codex/hooks.json" "$root/.codex/hooks.json"
+  hook=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["hooks"]["SessionStart"][0]["hooks"][0]["command"])' "$root/.codex/hooks.json")
+  out=$(cd "$root" && env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT \
+    -u CURSOR_AGENT -u CURSOR_INVOKED_AS FM_GATE_REFUSE_BYPASS=0 \
+    FM_HOME="$root" FM_ROOT_OVERRIDE="$root" PATH="$RUN_PATH" \
+    bash -c "$hook" <<<'{"source":"startup","session_id":"portable-hook-regression"}')
+  assert_contains "$out" "lock acquired: harness pid" "native hook did not acquire its fixture lock"
+  assert_contains "$out" "primary harness: codex" "native hook lost the Codex ancestor"
+  assert_contains "$out" "Mode: Codex foreground checkpoint." "native hook selected the wrong supervision protocol"
+  assert_contains "$out" "NEXT STEP" "native hook digest is incomplete"
+  pass "native Codex hook delivers its complete digest with the Codex protocol"
+}
+
+if [ -n "${FM_TEST_ONLY:-}" ]; then
+  fm_test_run "$FM_TEST_ONLY"
+  exit $?
+fi
+
 test_genuine_primary_nudges
 test_gate_env_is_silent
 test_gate_common_dir_is_silent
@@ -1104,6 +1128,7 @@ test_owned_lock_is_silent
 test_namespace_pid1_lock_holder_is_silent
 test_opencode_plugin_delivers_exact_nudge_once
 test_run_startup_runs_the_full_digest
+test_native_codex_hook_selects_codex_protocol
 test_run_clear_and_compact_reemit
 test_run_rebuild_forwards_source_to_drifted_instruction_refresh
 test_run_compact_without_completion_refreshes_before_finishing_startup
