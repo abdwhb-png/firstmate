@@ -5702,6 +5702,7 @@ SH
     run_watcher_bounded "$dir/home" "$dir/fakebin" >"$dir/watch.out" 2>"$dir/watch.err" &
   watch_pid=$!
   IFS= read -r -t 20 barrier <&7 || fail 'original poll did not reach forge barrier'
+  [ "$barrier" = poll-held ] || fail 'unexpected forge barrier signal'
   [ -d "$state/.control-task-a.lock" ] || fail 'poll did not hold its control lock'
   FM_TEST_REARM_DIR="$dir" run_check_entry "$dir" task-a "$url_b" >"$dir/arm-b.out" 2>"$dir/arm-b.err" || fail 'replacement PR registration failed'
   printf 'release\n' >&8
