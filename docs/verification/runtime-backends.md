@@ -82,14 +82,9 @@ Run on the host under Claude Code 2.1.252 with the same two markers set, the sam
 
 ### Native Codex startup hook ancestry
 
-Verified on 2026-11-16 on Linux with Codex CLI 0.167.0, OpenAI `gpt-6.1-sol`, and effort `low`, launched directly in Herdr with `--no-daemon --no-alt-screen` and no tmux parent, in an empty standalone Firstmate clone.
-The fresh native SessionStart hook delivered its developer digest before the first agent tool call, reporting `primary harness: codex` and `Mode: Codex foreground checkpoint.`; the recorded lock PID matched the live native Codex process.
-No mission, worker, or watcher was launched.
-This qualifies the startup protocol, not a complete supervised mission or another harness.
+Verified on 2026-11-16 on Linux with Codex CLI 0.167.0, OpenAI `gpt-6.1-sol`, and effort `low`, launched directly in Herdr with `--no-daemon --no-alt-screen` and no tmux parent, in an empty standalone Firstmate clone. The fresh native SessionStart hook delivered its developer digest before the first agent tool call, reporting `primary harness: codex` and `Mode: Codex foreground checkpoint.`; the recorded lock PID matched the live native Codex process. No mission, worker, or watcher was launched. This qualifies the startup protocol, not a complete supervised mission or another harness.
 
-The full tracked hook command has enough wrapper processes to exceed the former eight-parent budget.
-The upward walk now examines sixteen processes while retaining nearest-harness precedence and the separate descendant budget.
-Refresh its portable regression and boundary coverage with:
+The full tracked hook command has enough wrapper processes to exceed the former eight-parent budget. The upward walk now examines sixteen processes while retaining nearest-harness precedence and the separate descendant budget. Refresh its portable regression and boundary coverage with:
 
 ```sh
 FM_TEST_ONLY=test_native_codex_hook_selects_codex_protocol bash tests/fm-sessionstart-nudge.test.sh
@@ -104,8 +99,7 @@ ok - native Codex hook delivers its complete digest with the Codex protocol
 FM_TEST_COMPLETE
 ```
 
-The precedence suite also proves detection at positions nine and sixteen and refusal at seventeen.
-Linked task worktrees intentionally stand down through `bin/fm-primary-scope-lib.sh`; a fresh live qualification must use a standalone primary clone.
+The precedence suite also proves detection at positions nine and sixteen and refusal at seventeen. Linked task worktrees intentionally stand down through `bin/fm-primary-scope-lib.sh`; a fresh live qualification must use a standalone primary clone.
 
 ### Real harness process names behind the walk
 
