@@ -9,7 +9,9 @@ Balance hints come from serial runs of the real lanes on `ubuntu-latest`.
 The concurrent isolation proof in [fm-test-isolation-proof.md](fm-test-isolation-proof.md) establishes concurrency safety, not serial CI duration.
 Local timings are not interchangeable with CI timings: platform and machine load can affect each script differently and change their relative weights.
 
-Both hint tables were refreshed on 2026-09-30 from five Ubuntu CI runs: [36583881812](https://github.com/kunchenguid/firstmate/actions/runs/36583881812), [36658498535](https://github.com/kunchenguid/firstmate/actions/runs/36658498535), [36663947738](https://github.com/kunchenguid/firstmate/actions/runs/36663947738), [36664663190](https://github.com/kunchenguid/firstmate/actions/runs/36664663190), and [36669175457](https://github.com/kunchenguid/firstmate/actions/runs/36669175457).
+The serial table was refreshed on 2026-11-16 with completed, passing Ubuntu samples from fork runs [43923637051](https://github.com/abdwhb-png/firstmate/actions/runs/43923637051) and [43917077386](https://github.com/abdwhb-png/firstmate/actions/runs/43917077386). All 273 uploaded serial artifact records from the newer run match their log markers exactly; completed passing markers from the timed-out shard and the preceding run supplement them. The table retains the greater of each prior qualified weight and its new successful measurement, preserving platform-specific and capability-skip exceptions. This refresh observes 286 serial members and supplies all 300 serial members with a hint, including retained prior measurements. Fourteen serial shards fit the unchanged modeled budget; completed scripts from a cancelled lane are valid samples, but that lane is not a passing whole-shard result. The dated inputs below remain provenance for retained weights, and capability skips do not qualify unavailable live integrations.
+
+Both hint tables were previously refreshed on 2026-09-30 from five Ubuntu CI runs: [36583881812](https://github.com/kunchenguid/firstmate/actions/runs/36583881812), [36658498535](https://github.com/kunchenguid/firstmate/actions/runs/36658498535), [36663947738](https://github.com/kunchenguid/firstmate/actions/runs/36663947738), [36664663190](https://github.com/kunchenguid/firstmate/actions/runs/36664663190), and [36669175457](https://github.com/kunchenguid/firstmate/actions/runs/36669175457).
 Use the slowest successful `duration_ms` per script across their uploaded portable timing artifacts and completed `FM_TEST_END` log markers, with the two version/platform exceptions below.
 All artifact records were cross-checked against the corresponding job's markers.
 This covered all 24 parallel and 201 serial members at that refresh; an existing live-capability skip is a portable-runner measurement, not a timing claim for the unavailable live integration.
@@ -67,7 +69,7 @@ Its scheduling regressions also check stored parallel lane order and preserve se
 These checks do not detect a script outgrowing an existing hint or establish measured job headroom.
 Refresh `portable_parallel_weight_hints` with the slowest completed `duration_ms` per script from several green CI runs' `fm-test-timing-portable-parallel-*` artifacts whenever the parallel set gains scripts or a member grows materially.
 
-The remote-secondmate lifecycle hint is 1005249 ms, its completed, passing `FM_TEST_END` sample from Ubuntu run [41289019354](https://github.com/kunchenguid/firstmate/actions/runs/41289019354). Rex lifecycle coverage outgrew the previous 345655 ms hint; serial shard 9 then reached the 30-minute job cap while running later tests. Twelve serial shards accommodate the refreshed weight and the three additional MDD and demonstration suites in this fork within the unchanged modeled budget and timeout policy. This is a completed-script measurement from a partial run, not a successful whole-shard timing or a guarantee of future headroom.
+The remote-secondmate lifecycle hint is 1005249 ms, its completed, passing `FM_TEST_END` sample from Ubuntu run [41289019354](https://github.com/kunchenguid/firstmate/actions/runs/41289019354). Rex lifecycle coverage outgrew the previous 345655 ms hint; serial shard 9 then reached the 30-minute job cap while running later tests. The serial layout accommodates this weight and the additional MDD and demonstration suites within the unchanged modeled budget and timeout policy. This is a completed-script measurement from a partial run, not a successful whole-shard timing or a guarantee of future headroom.
 
 ## Portable serial remainder
 
@@ -143,7 +145,7 @@ No fast mode, path skips, or paid runner provisioning is part of this layout.
 
 The longer-term performance objective remains a complete green run under fifteen minutes including start delay, but the three watch-triage members still sum to about 26 minutes of CI test time.
 The immediate packing target is the runner's modeled script budget, not a claim that more shards alone can make an indivisible script faster.
-The layout uses seventeen long-lived Linux jobs (twelve serial, two parallel, Herdr, two lint), plus short checks and macOS; insufficient shared account capacity can erase the packing gain.
+The layout uses nineteen long-lived Linux jobs (fourteen serial, two parallel, Herdr, two lint), plus short checks and macOS; insufficient shared account capacity can erase the packing gain.
 Compare complete before/after runs, preserve cancelled and partial-run evidence, and measure a representative normal-run sample before claiming a P95 improvement.
 The workflow retains per-PR supersession and keeps only the newest of close main pushes' runs, without changing the compliance workflow's event semantics.
 
