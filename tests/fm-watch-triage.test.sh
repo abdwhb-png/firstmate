@@ -5308,8 +5308,6 @@ test_prepared_mission_does_not_alarm() {
   pass "watcher keeps prepared task and evidence without inactive alarms"
 }
 
-# CI's stock macOS Bash lane sets FM_TEST_ONLY to run just the bash-3.2
-# churn-deferral regression. The rest of this file is not a 3.2 snapshot suite.
 test_colliding_endpoints_keep_independent_stale_history() (
   unset FM_HOME FM_STATE_OVERRIDE FM_DATA_OVERRIDE FM_CONFIG_OVERRIDE
   unset FM_WATCH_HANDLING_SUCCESSOR FM_WATCH_DELIVERED_REASON FM_FAKE_CREW_STATE

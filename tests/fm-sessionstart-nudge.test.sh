@@ -1099,6 +1099,7 @@ test_native_codex_hook_selects_codex_protocol() {
   make_run_primary "$root"
   rmdir "$root/bin"
   ln -s "$ROOT/bin" "$root/bin"
+  ln -s "$ROOT/docs" "$root/docs"
   mkdir -p "$root/.codex"
   cp "$ROOT/.codex/hooks.json" "$root/.codex/hooks.json"
   hook=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["hooks"]["SessionStart"][0]["hooks"][0]["command"])' "$root/.codex/hooks.json")

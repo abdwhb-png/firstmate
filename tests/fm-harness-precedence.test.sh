@@ -826,6 +826,37 @@ test_supervision_protocol_follows_corrected_verdict() {
   pass "session start renders the Codex protocol for a Codex primary holding a retained CLAUDECODE"
 }
 
+test_deep_ancestry_is_bounded() {
+  local fakebin index got expected
+  fakebin=$(fm_fakebin "$TMP_ROOT/deep-ancestry")
+  cat > "$fakebin/ps" <<'SH'
+#!/usr/bin/env bash
+pid= field= prev=
+for arg in "$@"; do
+  [ "$prev" != -p ] || pid=$arg
+  [ "$prev" != -o ] || field=$arg
+  prev=$arg
+done
+index=0
+[ "${pid:-0}" -lt 900000000 ] || index=$((pid - 900000000))
+if [ "$field" = ppid= ]; then
+  printf '%s\n' "$((900000001 + index))"
+elif [ "$index" -eq "$FM_TEST_HARNESS_INDEX" ]; then
+  printf 'codex\n'
+else
+  printf 'bash\n'
+fi
+SH
+  chmod +x "$fakebin/ps"
+  for index in 8 15 16; do
+    expected=codex
+    [ "$index" != 16 ] || expected=unknown
+    got=$(under_fake_ps "$fakebin" FM_TEST_HARNESS_INDEX="$index")
+    [ "$got" = "$expected" ] || fail "ancestor $((index + 1)) resolved '$got', expected '$expected'"
+  done
+  pass "deep ancestry identifies the nearest harness through sixteen processes and remains bounded"
+}
+
 test_markerless_ancestry_outranks_foreign_marker
 test_genuine_marker_and_ancestry_agree
 test_cursor_ordering_still_decides_when_ancestry_is_silent
@@ -841,3 +872,5 @@ test_descent_probe_prefers_comm_strength_when_deepest_leaves_tie
 test_supervision_branch_resolves_the_primary_pin
 test_supervision_branch_refuses_an_unknown_primary_pin
 test_supervision_protocol_follows_corrected_verdict
+
+test_deep_ancestry_is_bounded
