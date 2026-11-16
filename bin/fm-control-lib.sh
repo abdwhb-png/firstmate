@@ -56,12 +56,17 @@ candidate
 accept
 authorize
 action-check
+reconcile-delivery
+close-mission
+delivery-check
+delivery-review
+demonstration
 EOF
 }
 
 fm_control_verb_allowed() {  # <verb>
   case "${1-}" in
-    interrupt|exit|relaunch|assign|start|candidate|accept|authorize|action-check) return 0 ;;
+    interrupt|exit|relaunch|assign|start|candidate|accept|authorize|action-check|reconcile-delivery|close-mission|delivery-check|delivery-review|demonstration) return 0 ;;
   esac
   return 1
 }

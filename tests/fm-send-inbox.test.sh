@@ -504,6 +504,32 @@ test_empty_message_refused() {
   pass "fm-send: an empty or whitespace-only text steer refuses before marking, recording, or typing"
 }
 
+test_demonstration_obligation_preserves_message_semantics() {
+  local dir err body
+  dir=$(setup_case demonstration claude)
+  err="$dir/send.err"
+  printf 'demonstration=%s\n' "$dir/home/data/t1/demonstration.json" >> "$dir/home/state/t1.meta"
+  run_send "$dir" "$err" -- t1 '$5 is the corrected price' || fail 'demonstration correction was not sent'
+  body=$(record_body _ "$dir/home/state/t1.inbox/001.msg")
+  assert_contains "$body" '$5 is the corrected price' 'the correction text changed'
+  assert_contains "$body" 'Demonstration obligation remains current' 'ordinary correction lost its task obligation'
+  run_send "$dir" "$err" -- t1 '' && fail 'the obligation turned an empty message into a valid steer'
+  [ ! -e "$dir/home/state/t1.inbox/002.msg" ] || fail 'an empty correction created an instruction'
+  printf 'needs-decision [key=price]: choose the price\n' > "$dir/home/state/t1.status"
+  run_send "$dir" "$err" -- t1 --resolve-key price 'Use five' || fail 'the answer was not sent'
+  assert_contains "$(cat "$dir/home/state/t1.status")" 'answered: Use five' 'the plain answer was lost'
+  if grep -q 'Demonstration obligation' "$dir/home/state/t1.status"; then
+    fail 'task instructions contaminated the recorded decision answer'
+  fi
+  dir=$(setup_case demonstration-native codex)
+  printf 'demonstration=%s\n' "$dir/home/data/t1/demonstration.json" >> "$dir/home/state/t1.meta"
+  run_send "$dir" "$dir/send.err" -- t1 '$some-skill' || fail 'native skill invocation was not sent'
+  assert_contains "$(cat "$dir/send.log")" '$some-skill' 'the native invocation changed'
+  [ ! -d "$dir/home/state/t1.inbox" ] || fail 'the obligation changed the native parser route'
+  pass 'demonstration instructions accompany corrections without changing empty messages, answers or native parser routes'
+}
+
+test_demonstration_obligation_preserves_message_semantics
 test_text_steer_rides_inbox
 test_deep_home_doorbell_stays_short
 test_multiline_steer_is_legal

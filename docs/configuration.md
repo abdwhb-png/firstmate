@@ -1663,6 +1663,14 @@ The text is static and never executed or expanded; secondmate charters never tak
 
 `bin/fm-brief.sh`'s header owns the placement rule and its safety argument.
 
+## Demonstration obligation (config/demonstration)
+
+Set the local, gitignored `config/demonstration` file to `required` to require a demonstration contract for every ship intake, scout promotion and managed work return in this home, including MDD missions. Absent configuration preserves homes that have not adopted this workflow; a task can also opt in explicitly, and a bound obligation remains mandatory after the setting is removed. Existing tasks in an enabled home must register their contract before their next managed transition; enabling the setting neither rewrites their evidence nor accepts their previous work. The primary setting follows the existing secondmate configuration inheritance mechanism.
+
+The task contract chooses the approved journey, applicable project rules and durable evidence location, while `local-only` tasks retain local demonstrations without gaining publication authority. Other delivery modes require a published demonstration; publication verification currently supports github.com native attachments, with unsupported forges producing an explicit refusal rather than a local-only fallback. Reader reports record unavailable trial access explicitly and preserve the project's runtime lifecycle and availability commitments.
+
+The operation and input contract is owned by `bin/fm-demonstration-lib.mjs --help`, reached through the existing control and dispatch commands. Node is required by the existing toolchain, and native asset access is checked through the existing authenticated GitHub CLI. The control checks evidence identity and applicability while the existing reviewers and coordinator attest journey relevance, composition and reader comprehension. No reviewer, polling loop, publication grant or MDD backend support is added by enabling this setting.
+
 ## Git exclusions (config/git-excludes)
 
 `$FM_HOME/config/git-excludes` is a local, gitignored text file using ordinary `.gitignore` syntax. It applies to every worker harness launched by that home, including relaunches. It can contain personal paths as well as agent runtime files. Comments, spaces, glob patterns and ordered `!` exceptions retain Git's normal meaning. Patterns are relative to each project repository, not to the Firstmate home.
@@ -2225,6 +2233,8 @@ The per-backend delta is required only for the backend resolved from `FM_BACKEND
 
 The JSON-emitting adapters (`herdr`, `zellij`, `cmux`, `paseo`, `rex`, `tern`) need `jq` because their spawn and liveness paths parse backend JSON.
 Every session-provider-only backend (`tmux`, `herdr`, `zellij`, `cmux`, `paseo`, `rex`, `t3code`, `tern`) uses `treehouse` for worktrees.
+
+The MDD integration's [native Git worktrees](design/fork-mdd.md#livraisons-et-pr-empilées) do not use the Treehouse pool; bootstrap's backend-wide inventory does not distinguish this task path.
 
 Backend tool availability uses the adapter's own executable resolver, so bootstrap and spawn agree on supported non-`PATH` locations such as cmux's bundled CLI and the Rex server bundle's `rex`.
 An unknown resolved backend emits `BACKEND_INVALID` and blocks dispatch instead of silently dropping its dependency delta or falling back to tmux.

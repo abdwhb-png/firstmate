@@ -663,6 +663,7 @@ note_expected_head() {
 }
 
 gitlab_verify_mergeable() {
+  local reviewed_target
   local json fields line pipeline_waived
   local total=0 named=0 refusals=''
   local state='' detail='' conflicts='' discussions=''
@@ -761,6 +762,11 @@ FIELDS
   fi
 
   note_expected_head "$live_head"
+  if [ "$(fm_dod_meta_value "$META" delivery_review_required)" = 1 ]; then
+    reviewed_target=$(fm_pr_json_target gitlab "$json") || { echo 'delivery review: published target is unavailable' >&2; return 1; }
+    fm_dod_delivery_published_check "$META" "$live_head" "$reviewed_target" || return 1
+  fi
+
   if [ -n "$FM_PR_EXPECTED_HEAD_REFUSAL" ]; then
     refusals="$refusals$FM_PR_EXPECTED_HEAD_REFUSAL
 "
@@ -794,6 +800,7 @@ FIELDS
 # GitHub and GitLab this never sets an async/queued signal: every accepted
 # Forgejo merge here is immediate. Shares FM_PR_MERGE_HEAD, declared above.
 forgejo_verify_mergeable() {
+  local reviewed_target
   local pr_json status_json fields line
   local total=0 named=0 refusals=''
   local state='' mergeable='' draft='' live_head='' ci_state='' page_state='' page_count='' page=1
@@ -903,6 +910,11 @@ FIELDS
 "
 
   note_expected_head "$live_head"
+  if [ "$(fm_dod_meta_value "$META" delivery_review_required)" = 1 ]; then
+    reviewed_target=$(fm_pr_json_target forgejo "$pr_json") || { echo 'delivery review: published target is unavailable' >&2; return 1; }
+    fm_dod_delivery_published_check "$META" "$live_head" "$reviewed_target" || return 1
+  fi
+
   if [ -n "$FM_PR_EXPECTED_HEAD_REFUSAL" ]; then
     refusals="$refusals$FM_PR_EXPECTED_HEAD_REFUSAL
 "
@@ -1133,6 +1145,7 @@ github_required_checks_missing() {
 # the usual 1, when mergeable=UNKNOWN is the only failing condition, so the
 # caller can retry a still-computing mergeability read instead of refusing.
 github_verify_mergeable() {
+  local reviewed_target
   local json fields line red failed name covered missing unreported producers runs pending
   local total=0 named=0 refusals='' mergeable_refusal=''
   local state='' draft='' mergeable='' merge_state='' live_head='' base=''
@@ -1293,6 +1306,11 @@ EOF
   fi
 
   note_expected_head "$live_head"
+  if [ "$(fm_dod_meta_value "$META" delivery_review_required)" = 1 ]; then
+    reviewed_target=$(fm_pr_json_target github "$json") || { echo 'delivery review: published target is unavailable' >&2; return 1; }
+    fm_dod_delivery_published_check "$META" "$live_head" "$reviewed_target" || return 1
+  fi
+
   if [ -n "$FM_PR_EXPECTED_HEAD_REFUSAL" ]; then
     FM_PR_GITHUB_OTHER_REFUSAL=true
     refusals="$refusals$FM_PR_EXPECTED_HEAD_REFUSAL
@@ -1877,26 +1895,27 @@ away_status=0
 require_current_away_authority || away_status=$?
 [ "$away_status" -eq 0 ] || exit "$away_status"
 require_recorded_pr_identity || exit 1
-# For MDD the local committed worktree is the input to the existing
-# delivery check in record_pr_metadata. Pin that input through all forge
+fm_dod_delivery_check "$META" ready || exit 1
+# Pin the examined local worktree through delivery validation and all forge
 # preflights, including the one after a permitted branch update.
-MDD_MERGE_WORKTREE=
-if [ -n "$(fm_dod_meta_value "$META" mdd_state)" ]; then
-  MDD_MERGE_WORKTREE=$(fm_dod_meta_value "$META" worktree)
-  if [ -z "$MDD_MERGE_WORKTREE" ] || ! MDD_MERGE_HEAD=$(git -C "$MDD_MERGE_WORKTREE" rev-parse --verify HEAD); then
-    echo "error: MDD merge could not identify the accepted worktree head" >&2
+REVIEWED_MERGE_WORKTREE=
+if [ -n "$(fm_dod_meta_value "$META" mdd_state)$(fm_dod_meta_value "$META" demonstration)" ] \
+  || [ "$(fm_dod_meta_value "$META" delivery_review_required)" = 1 ]; then
+  REVIEWED_MERGE_WORKTREE=$(fm_dod_meta_value "$META" worktree)
+  if [ -z "$REVIEWED_MERGE_WORKTREE" ] || ! REVIEWED_MERGE_HEAD=$(git -C "$REVIEWED_MERGE_WORKTREE" rev-parse --verify HEAD); then
+    echo "error: delivery merge could not identify the examined worktree head" >&2
     exit 1
   fi
-  if [ -n "$EXPECTED_HEAD" ] && [ "$EXPECTED_HEAD" != "$MDD_MERGE_HEAD" ]; then
-    echo "error: MDD expected head must match the accepted worktree head $MDD_MERGE_HEAD" >&2
+  if [ -n "$EXPECTED_HEAD" ] && [ "$EXPECTED_HEAD" != "$REVIEWED_MERGE_HEAD" ]; then
+    echo "error: delivery expected head must match the examined worktree head $REVIEWED_MERGE_HEAD" >&2
     exit 1
   fi
-  EXPECTED_HEAD=$MDD_MERGE_HEAD
+  EXPECTED_HEAD=$REVIEWED_MERGE_HEAD
 fi
 record_pr_metadata || exit 1
-if [ -n "$MDD_MERGE_WORKTREE" ] \
-  && [ "$(git -C "$MDD_MERGE_WORKTREE" rev-parse --verify HEAD)" != "$EXPECTED_HEAD" ]; then
-  echo "error: MDD worktree head changed during delivery validation; retry with the accepted commit" >&2
+if [ -n "$REVIEWED_MERGE_WORKTREE" ] \
+  && [ "$(git -C "$REVIEWED_MERGE_WORKTREE" rev-parse --verify HEAD)" != "$EXPECTED_HEAD" ]; then
+  echo "error: examined worktree head changed during delivery validation; retry with the examined commit" >&2
   exit 1
 fi
 require_released_captain_hold || exit 1

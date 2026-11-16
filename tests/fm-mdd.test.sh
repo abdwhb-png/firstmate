@@ -46,6 +46,18 @@ git -C "$TMP_ROOT/project" commit -qm init --allow-empty
 printf 'unrelated\n' > "$TMP_ROOT/project/private.txt"
 out=$(FM_HOME="$TMP_ROOT/home" "$ROOT/bin/fm-spawn.sh" mission "$TMP_ROOT/project" --prepare \
   --mdd-state .missions/example/state.json --mdd-skill "$TMP_ROOT/source-bundle" --mode local-only --yolo off 2>&1) || fail "preparation refused: $out"
+out=$(FORGE=gerrit FM_HOME="$TMP_ROOT/home" "$ROOT/bin/fm-spawn.sh" mission-pr "$TMP_ROOT/project" --prepare \
+  --mdd-state .missions/example/state.json --mdd-skill "$BUNDLE" --mode direct-PR --yolo off 2>&1) || fail "PR preparation refused: $out"
+assert_grep 'delivery_review_required=1' "$TMP_ROOT/home/state/mission-pr.meta" 'prepared PR omitted its common examination'
+for excluded_forge in gerrit external; do
+  excluded_home="$TMP_ROOT/home-$excluded_forge"
+  mkdir -p "$excluded_home/data" "$excluded_home/state" "$excluded_home/config"
+  printf -- '- project [direct-PR forge=%s] — isolated fixture\n' "$excluded_forge" > "$excluded_home/data/projects.md"
+  if out=$(FM_HOME="$excluded_home" "$ROOT/bin/fm-spawn.sh" excluded "$TMP_ROOT/project" --prepare \
+    --mdd-state .missions/example/state.json --mdd-skill "$BUNDLE" --mode direct-PR --yolo off --harness codex --backend tmux 2>&1); then fail "unsupported MDD forge accepted: $excluded_forge"; fi
+  assert_contains "$out" "does not support forge=$excluded_forge" 'unsupported preparation lacks an explicit explanation'
+  [ ! -e "$excluded_home/state/excluded.meta" ] && [ ! -e "$excluded_home/data/excluded" ] || fail 'unsupported preparation published partial task data'
+done
 meta="$TMP_ROOT/home/state/mission.meta"
 printf 'changed upstream source\n' >> "$TMP_ROOT/source-bundle/SKILL.md"
 rm -rf "$TMP_ROOT/source-bundle"
@@ -239,6 +251,38 @@ mdd.recordCandidate(metaFile, reviewReport, true);
 console.log('ok - ignored runtime writes permit review, changed source and ignored referenced evidence still refuse');
 const finalResult = { ...result, id: 'final-accept', scope: 'mission', packet: null, actor: 'mission:review-2', freshContext: true, evidence: [{ kind: 'evidence', path: reviewReport }] };
 const finalPath = path.join(wt, '.missions/example/final-result.json'); fs.writeFileSync(finalPath, JSON.stringify(finalResult));
+const demonstration = await import(pathToFileURL(path.join(root, 'bin/fm-demonstration-lib.mjs')));
+const originalMeta = fs.readFileSync(metaFile), originalHome = process.env.FM_HOME;
+process.env.FM_HOME = path.dirname(path.dirname(metaFile));
+const demonstrationPlan = path.join(meta.mdd_data, 'demonstration-plan.json');
+fs.writeFileSync(demonstrationPlan, JSON.stringify({ version: 1, kind: 'nonvisual', authority: path.join(wt, '.missions/example/authority.md'), evidenceRoot: meta.mdd_data, journey: [{ id: 'mission', actor: 'user', context: 'complete mission', action: 'exercise both packets', result: 'both outcomes observed' }], criteria: [] }));
+demonstration.retainPlan(metaFile, demonstrationPlan, metaFile + '.demo');
+fs.renameSync(metaFile + '.demo', metaFile);
+fs.unlinkSync(finalPath);
+const demonstrationReport = path.join(meta.mdd_data, 'demonstration-report.json');
+const demonstrationHead = execFileSync('git', ['-C', wt, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+fs.writeFileSync(demonstrationReport, JSON.stringify({ stage: 'progress', head: demonstrationHead, report: reviewReport, scenes: [{ id: 'mission', status: 'observed', caption: 'User: complete mission, both packet outcomes observed', evidence: [reviewReport] }] }));
+demonstration.retainReport(metaFile, demonstrationReport);
+fs.writeFileSync(finalPath, JSON.stringify({ ...finalResult, outcome: 'correction_required' }));
+mdd.validateArtifact(path.join(meta.mdd_data, 'mdd-bundle'), finalPath);
+assert.doesNotThrow(() => demonstration.checkAcceptance(metaFile, finalPath), 'demonstration gating must retain a final MDD rejection');
+fs.unlinkSync(finalPath);
+fs.writeFileSync(demonstrationReport, JSON.stringify({ stage: 'review', head: demonstrationHead, report: reviewReport, complete: true, outcome: 'accepted', scenes: ['mission'], criteria: [] }));
+demonstration.retainReport(metaFile, demonstrationReport);
+fs.writeFileSync(finalPath, JSON.stringify(finalResult));
+assert.equal(demonstration.checkAcceptance(metaFile, finalPath).review.generation, 'review-2');
+const demonstrationRecord = path.join(meta.mdd_data, 'demonstration.json');
+const examinedDemonstration = fs.readFileSync(demonstrationRecord);
+for (const changed of [{ generation: 'impl-1' }, { assignment: 'another-review' }]) {
+  const stale = JSON.parse(examinedDemonstration);
+  Object.assign(stale.review, changed);
+  fs.writeFileSync(demonstrationRecord, JSON.stringify(stale));
+  assert.throws(() => demonstration.checkAcceptance(metaFile, finalPath), /current final reviewer/);
+}
+fs.writeFileSync(demonstrationRecord, examinedDemonstration);
+fs.writeFileSync(metaFile, originalMeta);
+if (originalHome === undefined) delete process.env.FM_HOME; else process.env.FM_HOME = originalHome;
+console.log('ok - demonstration final acceptance binds the actual reviewer assignment and generation without hashing the administrative result');
 mdd.acceptResult(metaFile, finalPath);
 state.validation = { kind: 'result', id: finalResult.id, revision: 1, path: finalPath }; state.status = 'completed'; saveState();
 assert.throws(() => mdd.deliveryCheck(metaFile), /ENOENT|authorization/);
@@ -261,7 +305,7 @@ const merge = spawnSync('bash', [path.join(root, 'bin/fm-pr-merge.sh'), 'mission
   encoding: 'utf8', env: { ...process.env, FM_HOME: home, FM_STATE_OVERRIDE: path.dirname(metaFile), PATH: fakebin + ':' + process.env.PATH, FM_MDD_TEST_FORGE_CALLS: calls }
 });
 assert.notEqual(merge.status, 0);
-assert.match(merge.stderr, /MDD.*expected head.*accepted worktree/, merge.stderr);
+assert.match(merge.stderr, /delivery.*expected head.*examined worktree/, merge.stderr);
 assert.equal(fs.existsSync(calls), false);
 
 const reportBefore = fs.readFileSync(reviewReport);
@@ -315,3 +359,32 @@ META
 if out=$(PATH="$TMP_ROOT/rolebin:$PATH" FM_HOME="$TMP_ROOT/home" "$ROOT/bin/fm-control.sh" role action-check --action delivery 2>&1); then fail 'MDD bypassed the existing self-repository publication owner'; fi
 assert_contains "$out" 'publication' 'refusal must identify existing publication authority'
 pass 'MDD delivery retains the existing self-repository publication boundary'
+
+node "$ROOT/tests/mdd-delivery.mjs" "$BUNDLE" legacy-cleanup
+
+mkdir -p "$TMP_ROOT/native-home/config" "$TMP_ROOT/native-project" "$TMP_ROOT/no-treehouse"
+printf 'manual\n' > "$TMP_ROOT/native-home/config/backlog-backend"
+git -C "$TMP_ROOT/native-project" init -q -b main
+git -C "$TMP_ROOT/native-project" commit -qm initial --allow-empty
+printf 'preserved\n' > "$TMP_ROOT/native-project/private.txt"
+out=$(FM_HOME="$TMP_ROOT/native-home" "$ROOT/bin/fm-spawn.sh" native "$TMP_ROOT/native-project" --prepare \
+  --mdd-state .missions/example/state.json --mdd-skill "$BUNDLE" --mode local-only --yolo off --harness codex --backend tmux 2>&1) || fail "native preparation refused: $out"
+native_wt=$(sed -n 's/^worktree=//p' "$TMP_ROOT/native-home/state/native.meta")
+printf 'window=fm-mdd-native-%s:fm-native\n' "$$" >> "$TMP_ROOT/native-home/state/native.meta"
+cat > "$TMP_ROOT/no-treehouse/treehouse" <<'SH'
+#!/bin/sh
+echo 'worktree is not managed by treehouse' >&2
+exit 1
+SH
+chmod +x "$TMP_ROOT/no-treehouse/treehouse"
+git -C "$TMP_ROOT/native-project" worktree lock "$native_wt"
+if out=$(PATH="$TMP_ROOT/no-treehouse:$PATH" FM_HOME="$TMP_ROOT/native-home" "$ROOT/bin/fm-teardown.sh" native --force 2>&1); then fail 'cleanup removed a locked MDD worktree'; fi
+assert_contains "$out" 'Git could not remove MDD worktree' 'cleanup masked the Git refusal'
+[ -d "$native_wt" ] && [ -f "$TMP_ROOT/native-home/state/native.meta" ] || fail 'failed cleanup discarded the worktree or its record'
+git -C "$TMP_ROOT/native-project" worktree unlock "$native_wt"
+out=$(PATH="$TMP_ROOT/no-treehouse:$PATH" FM_HOME="$TMP_ROOT/native-home" "$ROOT/bin/fm-teardown.sh" native --force 2>&1) || fail "native MDD cleanup required Treehouse: $out"
+[ ! -e "$native_wt" ] || fail 'native MDD worktree survived cleanup'
+[ ! -e "$TMP_ROOT/native-home/state/native.meta" ] || fail 'native MDD record survived cleanup'
+[ "$(cat "$TMP_ROOT/native-project/private.txt")" = preserved ] || fail 'cleanup changed the primary checkout'
+git -C "$TMP_ROOT/native-project" worktree list --porcelain | grep -Fq "$native_wt" && fail 'native MDD worktree registration survived cleanup'
+pass 'native MDD worktrees clean up through Git without Treehouse and preserve the primary checkout'

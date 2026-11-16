@@ -1,6 +1,6 @@
 # Agent lifecycle control plane
 
-MDD tasks add assignment, candidate, examination and authorization operations to this same control owner. The [fork design](design/fork-mdd.md) owns their lifecycle and boundaries; [fm-control](../bin/fm-control.sh) owns their command contract. Dedicated review replaces the stopped implementer in the same task, using a new execution identity and current immutable handoff.
+MDD tasks add assignment, candidate, examination and authorization operations to this same control owner. Delivery-aware tasks also expose `reconcile-delivery` and `close-mission`; their scoped authority, branch effects and archival checks are described in the fork design. The [fork design](design/fork-mdd.md) owns their lifecycle and boundaries; [fm-control](../bin/fm-control.sh) owns their command contract. Dedicated review replaces the stopped implementer in the same task, using a new execution identity and current immutable handoff.
 
 Firstmate talks to a running agent two ways, and they are not the same channel.
 
@@ -230,3 +230,9 @@ The empirical basis for each adapter's value is the `harness-adapters` skill's v
 - `tests/fm-backend-t3code.test.sh` - the t3code exit and relaunch refusals and the native interrupt against a fake T3 server.
 
 A confirmed `exit` retains the task and its evidence and records a receipt for the current `spawn_gen` under the existing metadata lock. The supervision predicate and watcher ignore only that stopped agent, while current pipeline attribution, registered event sources, checks and queued notifications remain independent. A status declaration or uncertain endpoint never creates this receipt. A replacement generation invalidates it before launch. Failed receipt publication requires reconciliation and does not report success.
+
+## Delivery verification
+
+The shared verification supports classic tasks and independently enabled MDD and demonstration workflows; its command contract and limits belong to [task control](../bin/fm-control.sh).
+
+For recorded delivery preparation, `fm-control --help` owns the report contract; the shared ready check rejects missing or stale examinations on tasks that require one.

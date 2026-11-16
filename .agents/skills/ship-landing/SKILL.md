@@ -1,6 +1,6 @@
 ---
 name: ship-landing
-description: Load when an MDD packet returns a candidate, when a ship reports a PR or ready branch, when deciding or monitoring landing, and before task cleanup.
+description: Load before framing a PR or MR delivery, when an MDD packet returns a candidate, when a ship reports a PR or ready branch, when deciding or monitoring landing, and before task cleanup.
 user-invocable: false
 metadata:
   internal: true
@@ -8,7 +8,24 @@ metadata:
 
 # Ship landing
 
+## Prepare a reviewable delivery
+
+A delivery is useful to review when its result, dependencies, evidence and risks can be understood together. Examine the proposed set of PRs before its first publication, then reassess unexpected growth, regrouping and changed dependencies. Use the existing brief and project conventions; MDD is optional.
+
+For each PR, identify its result, exclusions, declared base and the distinct decision a reviewer can make. Compare keeping the work together with separating it. Keep the contract, interface and tests needed for the same behavior or invariant together. Separate a capability that has useful acceptance criteria of its own; a technical prerequisite can qualify when its risk and validation justify a distinct review. Counts of PRs, files or lines prompt examination and never decide it. Review the whole set for fragmented journeys, repeated changes and artificial dependencies.
+
+Examine alignment with the request, impact, verification, rollback and error detection using actual changes and the project's existing reviews. Explain material risk and missing evidence individually; do not average away a destructive rollback or missing verification. These observations do not authorize extra scope, reviewers, pipelines or publication. Apply changelog and issue conventions only when the project requires them.
+
+Use the project's PR template and lead with the result. Choose the smallest explanation that makes the change understandable: pseudocode for a rule, a call tree for execution order, a component or file tree for responsibilities, a diagram for interactions, or observed media for a user journey. Retain relevant ownership and state boundaries; omit redundant illustrations. Use pr-demonstration when independently enabled and preserve its section and the surrounding PR content.
+
+For tasks requiring a recorded delivery examination, ask the worker for its complete preparation report and supporting evidence through the existing status channel. Examine it as coordinator before recording the verdict through fm-control's delivery-review operation. Its CLI header owns the format. Report a correction to the worker through the existing steering path; request the user only for a substantive unresolved decision. A receipt records this examination, not independent acceptance or permission to publish. Read the published PR again after publication and after regrouping so its title, explanation, demonstration and limits describe that exact delivery.
+
+
+When the task has a demonstration obligation or this home requires one, use `fm-control`'s demonstration operation to record its complete return, existing review and whole-presentation examination before delivery; its input contract is owned by `bin/fm-demonstration-lib.mjs --help`.
+
 For a task bound to MDD, first load the frozen external skill referenced by its assignment. Record the complete terminal report through the control owner, examine the packet under MDD and prepare the next authorized packet in the same task. Do not ask for a routine new approval. A dedicated review uses a stopped implementer and a fresh reviewer in this task. Apply the delivery procedure below only after final independent acceptance and a current delivery grant. A candidate-return refusal from the completion owner is a coordinator examination step, never a reason to start a pipeline or ask the worker to publish.
+
+Before presenting a ship as ready, run `fm-control <id> delivery-check --stage ready` and the project-required checks with immediate failure propagation. Use `--stage draft` for an authorized early draft and disclose its failed or unavailable checks; a draft is not a readiness signal. For an open v0.6 MDD PR mission, record and check its separately scoped `draft-delivery` authority before publishing an early draft; the ordinary delivery authority still requires final acceptance. MDD and demonstration apply only when independently enabled for the task.
 
 For PR-based ship tasks, the ready signal depends on mode: `no-mistakes` reports `done [at=<epoch>]: PR <url> checks green` after CI is green, while `direct-PR` reports `done [at=<epoch>]: PR <url>` after opening the PR, each only for a non-draft PR; a lane that deliberately holds a draft declares a wait instead, and `bin/fm-pr-check.sh` refuses to arm merge monitoring on a draft.
 Run `bin/fm-pr-check.sh <id> <PR url>` with the URL copied from that ready signal or the resolved checks-green `fm-crew-state.sh` line - it records `pr=` and the forge's `pr_head=` when available in the task's meta and arms the watcher's merge poll.
@@ -23,6 +40,8 @@ Tell the captain the PR's full `https://...` URL copied from the worker's ready 
 A captain instruction to merge is explicit authority; `yolo` is the only standing routine merge authority.
 For any custom `state/<id>.check.sh` you write yourself, keep it an ordinary single-link mode-`0700` file, print one line only when firstmate should wake, print nothing otherwise, finish before `FM_CHECK_TIMEOUT`, then bind its current bytes with `bin/fm-check-register.sh <id>` before the watcher may execute it.
 Retire a custom check only through `bin/fm-check-unregister.sh <id>` (or `bin/fm-teardown.sh` for a spawned task); never hand-compose an `rm` with `$STATE`/`$ID`.
+
+For a delivery-aware MDD task, follow the frozen delivery lifecycle on parent updates and merge wakes: reconcile authorized descendants in dependency order through `fm-control <id> reconcile-delivery`, renew affected evidence, and close an integrated mission through `fm-control <id> close-mission` before cleanup. Stop on missing authority, conflicts or stale evidence. The [fork design](../../../docs/design/fork-mdd.md#livraisons-et-pr-empilées) owns these command effects and qualification limits.
 
 Tear down a ship task only after landing is confirmed.
 A teardown refusal for uncommitted or unlanded work is a stop-and-investigate result, never an obstacle to bypass.
