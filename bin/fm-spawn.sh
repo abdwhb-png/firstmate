@@ -125,9 +125,10 @@
 #   overlay; an existing managed scope is refused. The profile's own gateway
 #   may run only while idle; a mid-turn, ambiguous or unreadable gateway is
 #   refused without changing it. No profile config or SOUL is edited.
-#   --model <name> and --effort <low|medium|high|xhigh|max|ultra> are concrete profile
-#   axes chosen by firstmate at intake. They are only threaded into harnesses whose
-#   installed CLIs were verified to support that axis; unsupported axes are omitted
+#   --model <name> and --effort <default|low|medium|high|xhigh|max|ultra> are profile
+#   axes chosen by firstmate at intake. Default uses the harness configuration.
+#   They are only threaded into harnesses whose installed CLIs were verified
+#   to support that axis; unsupported axes are omitted
 #   from that harness's launch rather than guessed. Ultra is the explicit
 #   exception: bin/fm-harness.sh validate-native-effort owns its model scope;
 #   supported Pi launches receive --codex-effort ultra, never --thinking ultra.
@@ -1305,9 +1306,9 @@ elif [ -n "$DEMONSTRATION_PLAN" ]; then
   exit 1
 fi
 case "$EFFORT" in
-'' | low | medium | high | xhigh | max | ultra) ;;
+'' | default | low | medium | high | xhigh | max | ultra) ;;
 *)
-  echo "error: --effort must be one of low, medium, high, xhigh, max, ultra" >&2
+  echo "error: --effort must be one of default, low, medium, high, xhigh, max, ultra" >&2
   exit 1
   ;;
 esac
@@ -2473,6 +2474,7 @@ if [ "$PREPARE" = 1 ]; then
   for field in "$MDD_STATE" "$MDD_SKILL" "$HARNESS_ARG" "$BACKEND_ARG" "$MODEL" "$EFFORT" "${POS[1]}"; do
     case "$field" in *$'\n'*|*$'\r'*) echo "error: preparation fields must be single-line values" >&2; exit 1 ;; esac
   done
+  fm_worker_account_request_valid "$ACCOUNT_ARG" || exit 1
   SPAWN_TASK_LOCK="$STATE/.spawn-$ID.lock"
   fm_lock_try_acquire "$SPAWN_TASK_LOCK" || { echo "error: task $ID is already being prepared" >&2; exit 1; }
   SPAWN_TASK_LOCK_HELD=1
@@ -2512,6 +2514,7 @@ if [ "$PREPARE" = 1 ]; then
     printf 'mode=%s\nyolo=%s\nbase_branch=%s\nupstream_consent=%s\n' "$MODE" "$YOLO" "$BASE_BRANCH" "$UPSTREAM_CONSENT"
     if fm_dod_delivery_review_required "$MODE" "$PREPARED_FORGE"; then echo 'delivery_review_required=1'; fi
     printf 'backend=%s\nharness=%s\nmodel=%s\neffort=%s\n' "$BACKEND_ARG" "$HARNESS_ARG" "${MODEL:-default}" "${EFFORT:-default}"
+    [ "$ACCOUNT_SET" -eq 0 ] || printf 'account=%s\n' "$ACCOUNT_ARG"
     if [ "$MODE" != local-only ] && [ "$PREPARED_FORGE" != none ]; then printf 'forge=%s\n' "$PREPARED_FORGE"; fi
     printf 'mdd_state=%s\nmdd_data=%s\n' "$MDD_STATE" "$DATA/$ID"
   } > "$SPAWN_META_TMP"

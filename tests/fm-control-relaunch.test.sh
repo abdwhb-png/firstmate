@@ -3345,14 +3345,26 @@ test_mdd_prepared_start_and_fresh_reviewer() {
   [ "$(meta_field "$dir" mdd-test spawn_gen)" != "$gen" ] || fail 'MDD profile replacement reused generation'
   [ "$(meta_field "$dir" mdd-test mdd_assignment)" = "$assignment" ] || fail 'MDD profile replacement rewrote assignment'
   gen=$(meta_field "$dir" mdd-test spawn_gen)
+  local real_mv brief_hash
+  brief_hash=$(git hash-object "$(meta_field "$dir" mdd-test mdd_brief)")
+  : > "$dir/fake/literal"
+  out=$(run_control "$dir" mdd-test relaunch --model default --effort default); rc=$?
+  expect_code 0 "$rc" "MDD profile reset refused: $out"
+  [ "$(meta_field "$dir" mdd-test model)" = default ] || fail 'MDD reset retained the previous model'
+  [ "$(meta_field "$dir" mdd-test effort)" = default ] || fail 'MDD reset retained the previous effort'
+  assert_not_contains "$(cat "$dir/fake/literal")" review-model 'MDD reset launched the previous model'
+  assert_not_contains "$(cat "$dir/fake/literal")" xhigh 'MDD reset launched the previous effort'
+  [ "$(journal_field "$dir" mdd-test phase)" = complete ] || fail 'MDD reset did not complete'
+  [ "$(meta_field "$dir" mdd-test spawn_gen)" != "$gen" ] || fail 'MDD reset reused generation'
+  [ "$(meta_field "$dir" mdd-test mdd_assignment)" = "$assignment" ] || fail 'MDD reset changed assignment'
+  [ "$(git hash-object "$(meta_field "$dir" mdd-test mdd_brief)")" = "$brief_hash" ] || fail 'MDD reset changed immutable handoff'
+  gen=$(meta_field "$dir" mdd-test spawn_gen)
   out=$(run_control "$dir" mdd-test relaunch --harness unverified-profile); rc=$?
   [ "$rc" -ne 0 ] || fail 'invalid MDD profile accepted'
   [ "$(cat "$dir/fake/command")" = codex ] || fail 'invalid profile stopped current reviewer'
   [ "$(meta_field "$dir" mdd-test spawn_gen)" = "$gen" ] || fail 'invalid profile changed generation'
   out=$(run_control "$dir" mdd-test exit); rc=$?
   expect_code 0 "$rc" "$out"
-  local real_mv brief_hash
-  brief_hash=$(git hash-object "$(meta_field "$dir" mdd-test mdd_brief)")
   real_mv=$(command -v mv)
   make_mv_failure_stub "$dir"
   out=$(FM_REAL_MV="$real_mv" FM_FAKE_META_PUBLISH_MV_FAIL="$dir/home/state/mdd-test.meta" \
@@ -3365,11 +3377,53 @@ test_mdd_prepared_start_and_fresh_reviewer() {
   pass "prepared mission launches and replaces implementer with fresh $harness reviewer in same task"
   done
 }
+test_mdd_preparation_preserves_the_selected_account() {
+  [ -n "${FM_TEST_MDD_BUNDLE:-}" ] || { echo 'skip - real MDD bundle not supplied'; return; }
+  local dir out rc wt id="rl-mdd-account-$RANDOM"
+  dir=$(new_case mdd-account "$id")
+  TASK_TMPS+=("/tmp/fm-$id")
+  mkdir -p "$dir/home/config" "$dir/selected-account"
+  printf '%s\n' ordinary "$dir/selected-account" > "$dir/home/config/claude-accounts"
+  make_claude_auth_stub "$dir"
+  : > "$dir/fake/windows"
+  printf firstmate > "$dir/fake/session-name"
+  fm_git_init_commit "$dir/project"
+  out=$(run_spawn "$dir" "$id" "$dir/project" --prepare --mdd-state .missions/example/state.json \
+    --mdd-skill "$FM_TEST_MDD_BUNDLE" --mode local-only --yolo off --harness claude \
+    --account "$dir/selected-account" --backend tmux); rc=$?
+  expect_code 0 "$rc" "preparation required a runtime login: $out"
+  [ "$(meta_field "$dir" "$id" account)" = "$dir/selected-account" ] || fail 'preparation lost the selected account'
+  [ ! -s "$dir/fake/literal" ] && [ ! -s "$dir/fake/windows" ] || fail 'preparation started a runtime'
+  wt=$(meta_field "$dir" "$id" worktree)
+  node "$ROOT/tests/mdd-fixture.mjs" "$FM_TEST_MDD_BUNDLE" "$wt" || fail 'mission fixture failed'
+  printf '%s' "$wt" > "$dir/fake/cwd"
+  printf zsh > "$dir/fake/command"
+  out=$(run_control "$dir" "$id" assign --role implementer --brief-file "$wt/.missions/example/handoff.md" \
+    --authority "$wt/.missions/example/authority.md"); rc=$?
+  expect_code 0 "$rc" "$out"
+  out=$(run_control "$dir" "$id" start); rc=$?
+  [ "$rc" -ne 0 ] || fail 'first launch accepted a signed-out account'
+  [ ! -s "$dir/fake/literal" ] || fail 'failed account check launched an agent'
+  : > "$dir/selected-account/.credentials.json"
+  out=$(run_control "$dir" "$id" start); rc=$?
+  expect_code 0 "$rc" "first launch lost the prepared account: $out"
+  [ "$(meta_field "$dir" "$id" account)" = "$dir/selected-account" ] || fail 'first launch changed the account'
+  assert_contains "$(cat "$dir/fake/literal")" "CLAUDE_CONFIG_DIR='$dir/selected-account'" 'first launch used another account'
+  [ -n "$(meta_field "$dir" "$id" spawn_gen)" ] || fail 'first launch has no generation'
+  out=$(run_spawn "$dir" "$id-invalid" "$dir/project" --prepare --mdd-state .missions/example/state.json \
+    --mdd-skill "$FM_TEST_MDD_BUNDLE" --mode local-only --yolo off --harness claude \
+    --account "$dir/selected-account"$'\n''injected=1' --backend tmux); rc=$?
+  [ "$rc" -ne 0 ] || fail 'preparation accepted account metadata injection'
+  [ ! -e "$dir/home/state/$id-invalid.meta" ] && [ ! -e "$dir/home/data/$id-invalid" ] || fail 'invalid account created mission data'
+  pass 'MDD preparation retains the explicit account and first launch validates its login'
+}
+
 if [ -n "${FM_TEST_ONLY:-}" ]; then
   "$FM_TEST_ONLY"
   exit 0
 fi
 test_mdd_prepared_start_and_fresh_reviewer
+test_mdd_preparation_preserves_the_selected_account
 
 test_relaunch_off_opencode_removes_tracked_wiring
 test_confirmed_stop_preserves_pr_identity
