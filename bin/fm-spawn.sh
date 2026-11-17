@@ -2521,7 +2521,9 @@ if [ "$PREPARE" = 1 ]; then
   fi
   fm_backlog_atomic_transition publish "$SPAWN_META_TMP" "$STATE/$ID.meta" "prepared mission" "$STATE" || exit 1
   SPAWN_META_TMP=
-  printf 'prepared %s worktree=%s\n' "$ID" "$WT"
+  printf 'prepared %s worktree=%s mdd=%s portable-evidence=%s\n' "$ID" "$WT" \
+    "$(jq -r '.version' "$DATA/$ID/mdd-bundle.json")" \
+    "$(jq -r '.portableEvidence // false' "$DATA/$ID/mdd-bundle.json")"
   exit 0
 fi
 [ -z "$MDD_STATE$MDD_SKILL" ] || { echo "error: MDD binding options require --prepare" >&2; exit 1; }

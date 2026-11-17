@@ -143,7 +143,7 @@ jobs:
         if: matrix.contract != 'legacy'
         with:
           repository: abdwhb-png/agent-stack
-          ref: 1686f534a51381324e4f040a1d327daaad4fd926
+          ref: a40ce4a127a6553cebce28c95d9033b0277ee892
           path: .qualification/agent-stack
           ssh-key: ${{ secrets.AGENT_STACK_READ_KEY }}
           persist-credentials: false

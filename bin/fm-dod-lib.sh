@@ -547,6 +547,7 @@ fm_dod_block() {  # <mode> <task-id> [branch] [<forge>] [<base>] [<consent>] [<p
   fm_forge_valid_for_mode "$forge" "$mode" fm_dod_block || return 1
   fm_base_branch_valid "$base" "$mode" "$forge" fm_dod_block || return 1
   fm_pr_text_valid "$pr" "$mode" "$forge" fm_dod_block || return 1
+  printf 'Before final review or preparing delivery evidence, load the firstmate ship-landing skill.\n'
   if [ -n "$consent" ]; then
     if [ "$mode" = local-only ]; then
       echo "error: fm_dod_block: upstream consent authorizes a publication that local-only never performs; drop it" >&2
@@ -1316,9 +1317,26 @@ fm_dod_delivery_review_record() (
   printf 'delivery review: recorded %s at %s\n' "$id" "$head"
 )
 
-fm_dod_delivery_check() {  # <meta> <draft|ready>
+fm_dod_candidate_whitespace() (  # <worktree> <base>
+  local wt=$1 base=$2 listing diagnostics status failed=0 file
+  listing=$(mktemp "${TMPDIR:-/tmp}/fm-candidate.XXXXXX") || return 1
+  trap 'rm -f "$listing"' EXIT
+  if ! git -C "$wt" diff --no-ext-diff --no-textconv --check "$base" --; then failed=1; fi
+  git -C "$wt" ls-files -z --others --exclude-standard > "$listing" || return 1
+  while IFS= read -r -d '' file; do
+    status=0
+    diagnostics=$(git -C "$wt" diff --no-index --no-ext-diff --no-textconv --check -- /dev/null "$file" 2>&1) || status=$?
+    if [ "$status" -gt 1 ] || [ -n "$diagnostics" ]; then
+      printf 'candidate: cannot verify %s\n%s\n' "$file" "$diagnostics"
+      failed=1
+    fi
+  done < "$listing"
+  return "$failed"
+)
+
+fm_dod_delivery_check() {  # <meta> <candidate|draft|ready>
   local meta=$1 stage=$2 wt project head base diagnostics='' failed=0 owner reference=HEAD
-  case "$stage" in draft|ready) ;; *) echo 'delivery: stage must be draft or ready' >&2; return 2 ;; esac
+  case "$stage" in candidate|draft|ready) ;; *) echo 'delivery: stage must be candidate, draft or ready' >&2; return 2 ;; esac
   case "$(fm_dod_meta_value "$meta" kind)" in ''|ship) ;; *) echo 'delivery: a ship task is required' >&2; return 1 ;; esac
   wt=$(fm_dod_meta_value "$meta" worktree)
   project=$(fm_dod_meta_value "$meta" project)
@@ -1337,6 +1355,16 @@ fm_dod_delivery_check() {  # <meta> <draft|ready>
   head=$(git -C "$wt" rev-parse --verify --end-of-options "$reference^{commit}") || return 1
   owner="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-mdd-lib.mjs"
   base=$(fm_dod_delivery_base "$meta" "$wt" "$project" "$reference") || return 1
+  if [ "$stage" = candidate ]; then
+    if ! fm_dod_candidate_whitespace "$wt" "$base"; then failed=1; fi
+    [ "$(git -C "$wt" rev-parse HEAD)" = "$head" ] || { echo 'delivery: head changed during verification' >&2; return 1; }
+    if [ "$failed" = 1 ]; then
+      printf 'stage=candidate head=%s status=incomplete\n' "$head"
+      return 1
+    fi
+    printf 'stage=candidate head=%s status=verified\n' "$head"
+    return 0
+  fi
   if [ -n "$(fm_dod_meta_value "$meta" mdd_state)" ] && [ "$stage" = draft ]; then
     node "$owner" draft-check "$meta" >/dev/null || return 1
   fi

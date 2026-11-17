@@ -46,6 +46,12 @@ git -C "$TMP_ROOT/project" commit -qm init --allow-empty
 printf 'unrelated\n' > "$TMP_ROOT/project/private.txt"
 out=$(FM_HOME="$TMP_ROOT/home" "$ROOT/bin/fm-spawn.sh" mission "$TMP_ROOT/project" --prepare \
   --mdd-state .missions/example/state.json --mdd-skill "$TMP_ROOT/source-bundle" --mode local-only --yolo off 2>&1) || fail "preparation refused: $out"
+prepared_version=$(jq -r '.version' "$TMP_ROOT/home/data/mission/mdd-bundle.json")
+assert_contains "$out" "mdd=$prepared_version" 'preparation omitted the frozen version'
+case "$prepared_version" in
+  v0.4-*|v0.5-*) assert_contains "$out" 'portable-evidence=false' 'legacy preparation hid its portability limit' ;;
+  *) assert_contains "$out" 'portable-evidence=true' 'portable preparation omitted its capability' ;;
+esac
 out=$(FORGE=gerrit FM_HOME="$TMP_ROOT/home" "$ROOT/bin/fm-spawn.sh" mission-pr "$TMP_ROOT/project" --prepare \
   --mdd-state .missions/example/state.json --mdd-skill "$BUNDLE" --mode direct-PR --yolo off 2>&1) || fail "PR preparation refused: $out"
 assert_grep 'delivery_review_required=1' "$TMP_ROOT/home/state/mission-pr.meta" 'prepared PR omitted its common examination'

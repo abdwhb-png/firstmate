@@ -3273,10 +3273,12 @@ SH
 test_mdd_prepared_start_and_fresh_reviewer() {
   [ -n "${FM_TEST_MDD_BUNDLE:-}" ] || { echo 'skip - real MDD bundle not supplied'; return; }
   local dir out rc wt gen harness assignment
-  for harness in codex pi; do
+  for harness in codex pi opencode; do
   dir=$(new_case "mdd-start-$harness" mdd-test)
   printf '#!/usr/bin/env bash\nprintf "Options: --tui-mode\\n"\n' > "$dir/fakebin/pi"
   chmod +x "$dir/fakebin/pi"
+  printf '#!/usr/bin/env bash\nprintf "1.0.0\\n"\n' > "$dir/fakebin/opencode"
+  chmod +x "$dir/fakebin/opencode"
   : > "$dir/fake/windows"
   printf firstmate > "$dir/fake/session-name"
   mkdir -p "$dir/project"
@@ -3292,6 +3294,8 @@ test_mdd_prepared_start_and_fresh_reviewer() {
   printf '%s' "$harness" > "$dir/fake/becomes"
   out=$(run_control "$dir" mdd-test assign --role implementer --brief-file "$wt/.missions/example/handoff.md" --authority "$wt/.missions/example/authority.md"); rc=$?
   expect_code 0 "$rc" "$out"
+  out=$(run_control "$dir" mdd-test delivery-check --stage candidate); rc=$?
+  expect_code 0 "$rc" "public candidate check refused: $out"
   out=$(run_control "$dir" mdd-test start); rc=$?
   expect_code 0 "$rc" "prepared task did not launch: $out"
   [ "$(meta_field "$dir" mdd-test model)" = selected-model ] || fail 'prepared start lost its model'
@@ -3311,13 +3315,53 @@ test_mdd_prepared_start_and_fresh_reviewer() {
   [ "$(cat "$wt/local-evidence.txt")" = 'retained local work' ] || fail 'replacement lost uncommitted work'
   [ "$(meta_field "$dir" mdd-test spawn_gen)" != "$gen" ] || fail 'replacement reused execution generation'
   gen=$(meta_field "$dir" mdd-test spawn_gen)
+  printf 'invalid source \n' > "$wt/untracked source.rs"
+  out=$(run_control "$dir" mdd-test assign --role reviewer --brief-file "$wt/.missions/example/handoff.md" --authority "$wt/.missions/example/authority.md"); rc=$?
+  [ "$rc" -ne 0 ] || fail 'review assignment accepted an invalid untracked candidate'
+  assert_contains "$out" 'untracked source.rs' 'review refusal did not identify the candidate defect'
+  [ "$(meta_field "$dir" mdd-test mdd_assignment)" = "$assignment" ] || fail 'refused review changed assignment'
+  printf 'valid source\n' > "$wt/untracked source.rs"
   out=$(run_control "$dir" mdd-test assign --role reviewer --brief-file "$wt/.missions/example/handoff.md" --authority "$wt/.missions/example/authority.md"); rc=$?
   expect_code 0 "$rc" "$out"
   [ "$(cat "$dir/fake/command")" = zsh ] || fail 'review assignment did not stop implementer'
+  printf 'late source \n' > "$wt/untracked source.rs"
+  out=$(run_control "$dir" mdd-test start); rc=$?
+  [ "$rc" -ne 0 ] || fail 'review launch accepted a late invalid file'
+  [ "$(cat "$dir/fake/command")" = zsh ] || fail 'refused candidate started a reviewer'
+  [ "$(meta_field "$dir" mdd-test spawn_gen)" = "$gen" ] || fail 'refused launch changed generation'
+  printf 'valid source\n' > "$wt/untracked source.rs"
   out=$(run_control "$dir" mdd-test start); rc=$?
   expect_code 0 "$rc" "$out"
   [ "$(meta_field "$dir" mdd-test spawn_gen)" != "$gen" ] || fail 'review reused implementation session identity'
   if grep -E -- '(codex|pi).*(resume|--continue|--session )' "$dir/fake/literal" >/dev/null; then fail 'review inherited old conversation'; fi
+  assignment=$(meta_field "$dir" mdd-test mdd_assignment)
+  gen=$(meta_field "$dir" mdd-test spawn_gen)
+  printf codex > "$dir/fake/becomes"
+  out=$(run_control "$dir" mdd-test relaunch --harness codex --model review-model --effort xhigh); rc=$?
+  expect_code 0 "$rc" "MDD profile replacement refused: $out"
+  [ "$(meta_field "$dir" mdd-test harness)" = codex ] || fail 'MDD replacement kept old harness'
+  [ "$(meta_field "$dir" mdd-test model)" = review-model ] || fail 'MDD replacement lost requested model'
+  [ "$(meta_field "$dir" mdd-test effort)" = xhigh ] || fail 'MDD replacement lost requested effort'
+  [ "$(meta_field "$dir" mdd-test spawn_gen)" != "$gen" ] || fail 'MDD profile replacement reused generation'
+  [ "$(meta_field "$dir" mdd-test mdd_assignment)" = "$assignment" ] || fail 'MDD profile replacement rewrote assignment'
+  gen=$(meta_field "$dir" mdd-test spawn_gen)
+  out=$(run_control "$dir" mdd-test relaunch --harness unverified-profile); rc=$?
+  [ "$rc" -ne 0 ] || fail 'invalid MDD profile accepted'
+  [ "$(cat "$dir/fake/command")" = codex ] || fail 'invalid profile stopped current reviewer'
+  [ "$(meta_field "$dir" mdd-test spawn_gen)" = "$gen" ] || fail 'invalid profile changed generation'
+  out=$(run_control "$dir" mdd-test exit); rc=$?
+  expect_code 0 "$rc" "$out"
+  local real_mv brief_hash
+  brief_hash=$(git hash-object "$(meta_field "$dir" mdd-test mdd_brief)")
+  real_mv=$(command -v mv)
+  make_mv_failure_stub "$dir"
+  out=$(FM_REAL_MV="$real_mv" FM_FAKE_META_PUBLISH_MV_FAIL="$dir/home/state/mdd-test.meta" \
+    run_control "$dir" mdd-test relaunch --harness pi --model replacement-model); rc=$?
+  [ "$rc" -ne 0 ] || fail 'MDD replacement accepted a metadata publication failure'
+  [ "$(cat "$dir/fake/command")" = zsh ] || fail 'metadata failure launched a replacement or fallback'
+  [ "$(meta_field "$dir" mdd-test harness)" = codex ] || fail 'failed publication replaced the prior profile'
+  [ "$(meta_field "$dir" mdd-test spawn_gen)" = "$gen" ] || fail 'failed publication changed generation'
+  [ "$(git hash-object "$(meta_field "$dir" mdd-test mdd_brief)")" = "$brief_hash" ] || fail 'MDD replacement changed immutable handoff'
   pass "prepared mission launches and replaces implementer with fresh $harness reviewer in same task"
   done
 }

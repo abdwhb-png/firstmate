@@ -21,6 +21,71 @@ write_merge_marker() {  # <state> <id> <provider> <host> <path> <number>
   chmod 600 "$1/$2.pr-poll-merge-notified"
 }
 
+test_candidate_checks_untracked_content_without_staging() {
+  local repo wt meta index before out
+  repo="$TMP_ROOT/candidate-repo"
+  wt="$TMP_ROOT/candidate-wt"
+  fm_git_worktree "$repo" "$wt" fm/candidate
+  meta="$TMP_ROOT/candidate.meta"
+  fm_write_meta "$meta" kind=ship mode=direct-PR worktree="$wt" project="$repo" base_branch=main
+  index=$(git -C "$wt" rev-parse --git-path index)
+  before=$(git hash-object "$index")
+  printf 'valid source\n' > "$wt/new source.txt"
+  out=$(fm_dod_delivery_check "$meta" candidate 2>&1) || fail "valid uncommitted candidate refused: $out"
+  assert_contains "$out" 'status=verified' 'candidate omitted its verified outcome'
+  printf 'invalid source \n' > "$wt/new source.txt"
+  if out=$(fm_dod_delivery_check "$meta" candidate 2>&1); then fail 'candidate accepted untracked whitespace'; fi
+  assert_contains "$out" 'new source.txt' 'candidate did not identify the untracked failure'
+  [ "$(git hash-object "$index")" = "$before" ] || fail 'candidate changed the index'
+  [ "$(cat "$wt/new source.txt")" = 'invalid source ' ] || fail 'candidate changed the source'
+  pass 'candidate checks current untracked content without staging or rewriting it'
+}
+
+test_candidate_checks_untracked_content_without_staging
+
+test_candidate_respects_attributes_and_reports_read_errors() {
+  local repo wt meta out real_git
+  repo="$TMP_ROOT/candidate-files-repo"
+  wt="$TMP_ROOT/candidate-files-wt"
+  fm_git_worktree "$repo" "$wt" fm/candidate-files
+  meta="$TMP_ROOT/candidate-files.meta"
+  fm_write_meta "$meta" kind=ship mode=direct-PR worktree="$wt" project="$repo" base_branch=main
+  printf '*.log whitespace=-blank-at-eol\n' > "$wt/.gitattributes"
+  printf 'ignored.txt\n' > "$wt/.gitignore"
+  printf 'raw output \n' > "$wt/raw.log"
+  printf 'ignored output \n' > "$wt/ignored.txt"
+  printf '{"stdout":"original output \\n"}\n' > "$wt/proof.json"
+  printf 'binary\0content\n' > "$wt/binary.dat"
+  printf 'valid\n' > "$wt/-leading
+newline.txt"
+  ln -s /nonexistent-candidate-target "$wt/link"
+  out=$(fm_dod_delivery_check "$meta" candidate 2>&1) || fail "candidate rejected valid attributes or file types: $out"
+  jq -e '.stdout == "original output \n"' "$wt/proof.json" >/dev/null || fail 'JSON evidence lost original output'
+  printf 'authored report \n' > "$wt/report.md"
+  if out=$(fm_dod_delivery_check "$meta" candidate 2>&1); then fail 'raw attributes disabled authored report checks'; fi
+  assert_contains "$out" 'report.md' 'authored report failure was omitted'
+  rm "$wt/report.md"
+  real_git=$(command -v git)
+  mkdir -p "$TMP_ROOT/candidate-git"
+  cat > "$TMP_ROOT/candidate-git/git" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *'ls-files -z --others --exclude-standard')
+    "$FM_TEST_CANDIDATE_GIT" "$@" || exit
+    rm -- "$FM_TEST_CANDIDATE_VANISH"
+    ;;
+  *) exec "$FM_TEST_CANDIDATE_GIT" "$@" ;;
+esac
+SH
+  chmod +x "$TMP_ROOT/candidate-git/git"
+  printf 'vanishing\n' > "$wt/vanishing.txt"
+  if out=$(PATH="$TMP_ROOT/candidate-git:$PATH" FM_TEST_CANDIDATE_GIT="$real_git" FM_TEST_CANDIDATE_VANISH="$wt/vanishing.txt" fm_dod_delivery_check "$meta" candidate 2>&1); then fail 'candidate accepted a Git access error with exit 1'; fi
+  assert_contains "$out" 'vanishing.txt' 'candidate access error lacked its path'
+  pass 'candidate preserves Git classifications and refuses an actual access error'
+}
+
+test_candidate_respects_attributes_and_reports_read_errors
+
 test_scout_done_is_not_gated() {
   local repo wt
   repo="$TMP_ROOT/scout-repo"

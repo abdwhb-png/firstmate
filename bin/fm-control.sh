@@ -4,7 +4,7 @@
 #
 # Usage: fm-control.sh <task-id> assign --role <implementer|reviewer|final-reviewer> --brief-file <handoff> --authority <existing-evidence>
 #        fm-control.sh <task-id> delivery-review --report <json>
-#        fm-control.sh <task-id> delivery-check --stage <draft|ready>
+#        fm-control.sh <task-id> delivery-check --stage <candidate|draft|ready>
 #        fm-control.sh <task-id> start
 #        fm-control.sh <task-id> candidate --report <file> --complete
 #        fm-control.sh <task-id> accept --result <MDD-result>
@@ -14,7 +14,9 @@
 #        fm-control.sh <task-id> demonstration --plan <json>
 #        fm-control.sh <task-id> demonstration --report <json>
 #        fm-control.sh <task-id> demonstration --action <check|checkpoint>
-# delivery-check verifies the complete committed diff. draft reports incomplete
+# delivery-check candidate checks tracked and untracked working content without
+# staging, acceptance or delivery authority. Reviewer assignment and launch
+# require it. Other stages verify the complete committed diff. draft reports incomplete
 # checks; ready refuses whitespace, uncommitted work and enabled workflow gaps.
 # MDD and demonstration checks apply only to their bound or configured tasks.
 # delivery-review v1 report: version:1, task (id), repository (absolute worktree),
@@ -40,6 +42,9 @@
 # evidence, not inferred from a delivery mode. action-check revalidates it before
 # the managed action. These commands do not edit MDD state/history, run a
 # pipeline, publish, or clean up. The coordinator owns those authorized steps.
+# MDD relaunch accepts profile options after initial preparation and preserves
+# the immutable assignment. Notes remain forbidden: use assign for new instructions.
+# Replacement uses the ordinary relaunch transaction without profile fallback.
 #        fm-control.sh <task-id> interrupt
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
@@ -1385,11 +1390,15 @@ do_relaunch() {
 
   case "$KIND" in
     ship|scout)
-      RELAUNCH_BRIEF="$DATA/$ID/brief.md"
+      if [ -n "$(fm_meta_get "$META" mdd_state)" ]; then
+        RELAUNCH_BRIEF=$(fm_meta_get "$META" mdd_brief)
+      else
+        RELAUNCH_BRIEF="$DATA/$ID/brief.md"
+        [ "$NOTE_SET" = 1 ] && [ -n "$NOTE" ] \
+          || die "relaunch of a $KIND task requires --note (or --note-file): the replacement worker inherits the local copy but none of the conversation, so it must be told what happened"
+      fi
       [ -f "$RELAUNCH_BRIEF" ] \
         || die "task $ID has no instructions at $RELAUNCH_BRIEF; refusing to relaunch a worker with nothing to work from"
-      [ "$NOTE_SET" = 1 ] && [ -n "$NOTE" ] \
-        || die "relaunch of a $KIND task requires --note (or --note-file): the replacement worker inherits the local copy but none of the conversation, so it must be told what happened"
       ;;
     secondmate)
       # The charter in the secondmate's own home is its instruction source and
@@ -1417,6 +1426,9 @@ do_relaunch() {
   journal_write stopping "${CHECKPOINT_LINES[@]}" "$note_line"
   exit_result=$(do_exit)
   journal_write exited "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
+  if [ -n "$(fm_meta_get "$META" mdd_state)" ]; then
+    mdd_dispatch_check || return 1
+  fi
 
   # The launch owner (fm-spawn --relaunch) clears the previous incarnation's
   # per-task harness wiring before arming the new one, so nothing to do here.
@@ -1456,6 +1468,9 @@ do_relaunch() {
     die "the replacement agent for $ID did not come up within ${LAUNCH_WAIT}s (endpoint reads '$state')"
   }
   RELAUNCH_AGENT_CONFIRMED=1
+  if [ -n "$(fm_meta_get "$META" mdd_state)" ]; then
+    node "$SCRIPT_DIR/fm-mdd-lib.mjs" bind-execution "$META" || return 1
+  fi
 
   journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
@@ -1476,6 +1491,7 @@ do_assign() {
   case "$MDD_ROLE" in
     reviewer|final-reviewer)
       [ "$PREPARED" = 1 ] || do_exit >/dev/null || return 1
+      fm_dod_delivery_check "$META" candidate || return 1
       ;;
     implementer) ;;
     *) die "unsupported MDD assignment role" ;;
@@ -1501,10 +1517,19 @@ do_assign() {
   printf 'assigned %s role=%s brief=%s\n' "$ID" "$MDD_ROLE" "$(fm_meta_get "$META" mdd_brief)"
 }
 
+mdd_dispatch_check() {
+  local assignment role
+  fm_dod_demonstration_check "$META" contract-check || return 1
+  assignment=$(node "$SCRIPT_DIR/fm-mdd-lib.mjs" dispatch-check "$META") || return 1
+  role=$(printf '%s' "$assignment" | jq -er '.role') || return 1
+  case "$role" in
+    reviewer|final-reviewer) fm_dod_delivery_check "$META" candidate || return 1 ;;
+  esac
+}
+
 mdd_start() {
   local state
-  fm_dod_demonstration_check "$META" contract-check || return 1
-  node "$SCRIPT_DIR/fm-mdd-lib.mjs" dispatch-check "$META" >/dev/null || return 1
+  mdd_dispatch_check || return 1
   "$SCRIPT_DIR/fm-spawn.sh" "$ID" --relaunch || return 1
   fm_backend_validate_task_endpoint "$META" "$ID" || return 1
   BACKEND=$FM_BACKEND_VALIDATED_BACKEND
@@ -1585,10 +1610,14 @@ case "$VERB" in
   relaunch)
     fm_dod_demonstration_check "$META" contract-check || exit 1
     if [ -n "$(fm_meta_get "$META" mdd_state)" ]; then
-      [ "$NOTE_SET$HARNESS_SET$MODEL_SET$EFFORT_SET" = 0000 ] || die "MDD replacements use the current frozen handoff; assign changed instructions explicitly"
-      node "$SCRIPT_DIR/fm-mdd-lib.mjs" dispatch-check "$META" >/dev/null || exit 1
-      [ "$PREPARED" = 1 ] || do_exit >/dev/null || exit 1
-      mdd_start
+      [ "$NOTE_SET" = 0 ] || die "MDD replacements use the current frozen handoff; assign changed instructions explicitly"
+      mdd_dispatch_check || exit 1
+      if [ "$PREPARED" = 1 ]; then
+        [ "$HARNESS_SET$MODEL_SET$EFFORT_SET$ACCOUNT_SET" = 0000 ] || die 'select the initial MDD profile during preparation'
+        mdd_start
+      else
+        do_relaunch
+      fi
     else
       do_relaunch
     fi
