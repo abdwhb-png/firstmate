@@ -86,6 +86,79 @@ SH
 
 test_candidate_respects_attributes_and_reports_read_errors
 
+test_candidate_refuses_tracked_git_diagnostics() {
+  local repo wt meta out real_git
+  repo="$TMP_ROOT/candidate-diagnostics-repo"
+  wt="$TMP_ROOT/candidate-diagnostics-wt"
+  fm_git_worktree "$repo" "$wt" fm/candidate-diagnostics
+  meta="$TMP_ROOT/candidate-diagnostics.meta"
+  fm_write_meta "$meta" kind=ship mode=direct-PR worktree="$wt" project="$repo" base_branch=main
+  real_git=$(command -v git)
+  mkdir -p "$TMP_ROOT/diagnostic-git"
+  cat > "$TMP_ROOT/diagnostic-git/git" <<'SH'
+#!/usr/bin/env bash
+"$FM_TEST_CANDIDATE_GIT" "$@" || exit
+diff=0 check=0 noindex=0
+for arg in "$@"; do
+  case "$arg" in diff) diff=1 ;; --check) check=1 ;; --no-index) noindex=1 ;; esac
+done
+if [ "$diff$check$noindex" = 110 ]; then
+  echo 'error: tracked candidate read failed' >&2
+fi
+SH
+  chmod +x "$TMP_ROOT/diagnostic-git/git"
+  if out=$(PATH="$TMP_ROOT/diagnostic-git:$PATH" FM_TEST_CANDIDATE_GIT="$real_git" fm_dod_delivery_check "$meta" candidate 2>&1); then
+    fail 'candidate accepted tracked Git errors with exit zero'
+  fi
+  assert_contains "$out" 'error: tracked candidate read failed' 'candidate hid the tracked Git error'
+  assert_contains "$out" 'status=incomplete' 'candidate did not report incomplete verification'
+  pass 'candidate refuses tracked Git errors even when Git exits zero'
+}
+
+test_candidate_refuses_tracked_git_diagnostics
+
+test_candidate_disables_git_filters_and_preserves_whitespace_attributes() {
+  local repo wt meta out filter file
+  repo="$TMP_ROOT/candidate-filters-repo"
+  wt="$TMP_ROOT/candidate-filters-wt"
+  fm_git_worktree "$repo" "$wt" fm/candidate-filters
+  meta="$TMP_ROOT/candidate-filters.meta"
+  fm_write_meta "$meta" kind=ship mode=direct-PR worktree="$wt" project="$repo" base_branch=main
+  mkdir -p "$wt/tools"
+  printf 'valid\n' > "$wt/tracked.txt"
+  printf 'raw\n' > "$wt/tracked.log"
+  printf '#!/usr/bin/env bash\ncat\n' > "$wt/tools/normalize"
+  chmod +x "$wt/tools/normalize"
+  git -C "$wt" add tracked.txt tracked.log tools/normalize
+  git -C "$wt" commit -qm 'tracked candidate'
+  printf '#!/usr/bin/env bash\n: > filter-executed\ncat\n' > "$wt/tools/normalize"
+  printf '*.txt filter=review\n*.log filter=review whitespace=-blank-at-eol\n' > "$wt/.gitattributes"
+  printf 'changed\n' > "$wt/tracked.txt"
+  printf 'raw output \n' > "$wt/tracked.log"
+  printf 'new\n' > "$wt/new.txt"
+  git -C "$wt" config filter.review.required true
+  for filter in clean process; do
+    git -C "$wt" config "filter.review.$filter" ./tools/normalize
+    out=$(fm_dod_delivery_check "$meta" candidate 2>&1) || fail "candidate refused a configured $filter filter: $out"
+    [ ! -e "$wt/filter-executed" ] || fail "candidate executed the project's $filter filter"
+    assert_contains "$out" 'status=verified' 'candidate omitted verification with filters disabled'
+  done
+  git -C "$wt" config --unset filter.review.process
+  git -C "$wt" config filter.review.clean false
+  git -C "$wt" config filter.review.required false
+  out=$(fm_dod_delivery_check "$meta" candidate 2>&1) || fail "candidate ran an optional failing filter: $out"
+  assert_not_contains "$out" 'error:' 'candidate ran an optional failing filter'
+  for file in tracked.txt new.txt; do
+    printf 'invalid \n' > "$wt/$file"
+    if out=$(fm_dod_delivery_check "$meta" candidate 2>&1); then fail "candidate skipped whitespace with filters disabled: $file"; fi
+    assert_contains "$out" "$file" 'candidate omitted the whitespace failure'
+    printf 'valid\n' > "$wt/$file"
+  done
+  pass 'candidate disables clean/process filters while retaining Git whitespace attributes'
+}
+
+test_candidate_disables_git_filters_and_preserves_whitespace_attributes
+
 test_scout_done_is_not_gated() {
   local repo wt
   repo="$TMP_ROOT/scout-repo"

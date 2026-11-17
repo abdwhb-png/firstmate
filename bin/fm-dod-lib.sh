@@ -1318,14 +1318,29 @@ fm_dod_delivery_review_record() (
 )
 
 fm_dod_candidate_whitespace() (  # <worktree> <base>
-  local wt=$1 base=$2 listing diagnostics status failed=0 file
+  local wt=$1 base=$2 listing diagnostics status failed=0 file key
+  local -a git_args=(-C "$wt")
   listing=$(mktemp "${TMPDIR:-/tmp}/fm-candidate.XXXXXX") || return 1
   trap 'rm -f "$listing"' EXIT
-  if ! git -C "$wt" diff --no-ext-diff --no-textconv --check "$base" --; then failed=1; fi
-  git -C "$wt" ls-files -z --others --exclude-standard > "$listing" || return 1
+  status=0
+  git -C "$wt" config --null --name-only --get-regexp '^filter\..*\.(clean|process|required)$' > "$listing" || status=$?
+  [ "$status" -le 1 ] || return 1
+  while IFS= read -r -d '' key; do
+    case "$key" in
+      *.required) git_args+=(-c "$key=false") ;;
+      *) git_args+=(-c "$key=") ;;
+    esac
+  done < "$listing"
+  status=0
+  diagnostics=$(git "${git_args[@]}" diff --no-ext-diff --no-textconv --check "$base" -- 2>&1) || status=$?
+  if [ "$status" -ne 0 ] || [ -n "$diagnostics" ]; then
+    printf 'candidate: cannot verify tracked content\n%s\n' "$diagnostics"
+    failed=1
+  fi
+  git "${git_args[@]}" ls-files -z --others --exclude-standard > "$listing" || return 1
   while IFS= read -r -d '' file; do
     status=0
-    diagnostics=$(git -C "$wt" diff --no-index --no-ext-diff --no-textconv --check -- /dev/null "$file" 2>&1) || status=$?
+    diagnostics=$(git "${git_args[@]}" diff --no-index --no-ext-diff --no-textconv --check -- /dev/null "$file" 2>&1) || status=$?
     if [ "$status" -gt 1 ] || [ -n "$diagnostics" ]; then
       printf 'candidate: cannot verify %s\n%s\n' "$file" "$diagnostics"
       failed=1
