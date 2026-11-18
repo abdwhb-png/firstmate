@@ -163,6 +163,11 @@ jobs:
           set -eu
           bin/fm-test-run.sh tests/fm-mdd.test.sh
           FM_TEST_ONLY=test_mdd_prepared_start_and_fresh_reviewer bin/fm-test-run.sh tests/fm-control-relaunch.test.sh
+      - name: Qualify prepared mission account
+        if: matrix.contract != 'portable-v06'
+        env:
+          FM_TEST_MDD_BUNDLE: ${{ github.workspace }}/.qualification/${{ matrix.contract == 'legacy' && 'agent-tools' || 'agent-stack' }}/skills/mission-driven-dev
+        run: FM_TEST_ONLY=test_mdd_preparation_preserves_the_selected_account bin/fm-test-run.sh tests/fm-control-relaunch.test.sh
       - name: Qualify delivery and current portable missions
         if: matrix.contract == 'delivery'
         env:
