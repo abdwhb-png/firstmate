@@ -1,0 +1,127 @@
+{
+  "subject": "firstmate-project-instructions",
+  "context": "Standing user preferences: perform bounded read-only project orientation yourself; read the project's own instructions and authoritative specifications before dispatch. Follow the project's established workflow; MDD is optional. These preferences apply equally to the baseline and candidate. This is a synthetic, analysis-only evaluation: propose the decision and task context, without executing operations.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "product-and-architecture-framing",
+      "prompt": "The user asks: 'Frame durable capture storage and prepare a worker brief.' Project AGENTS.md says the product is a local-first analyzer and accepted architecture decisions govern storage. docs/decisions/storage.md says accepted captures extend src/storage; no hosted storage or forwarding-only service layer. README.md describes local source capture. A proposed solution uses a hosted database behind a new StorageManager forwarding to a new StorageService. Propose the direction and Firstmate spec. No implementation is authorized.",
+      "expected_output": "Choose local persistence through the existing storage owner and carry the actual source references and implications into the brief.",
+      "expectations": [
+        "Uses the local-first product direction and accepted storage decision before choosing a solution.",
+        "References AGENTS.md and docs/decisions/storage.md in the proposed task context with their concrete implications.",
+        "Does not approve hosted storage, forwarding-only layers, implementation or publication."
+      ],
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "green-worker-project-conflict",
+      "prompt": "A worker returns a candidate and says all required tests pass. The user asked for CSV export from the existing report module. docs/decisions/exports.md is accepted and requires report exports to remain local with no network access. The supplied diff sends each report to a hosted rendering API; tests mock the API and pass. The candidate has a complete preparation report. Decide what the coordinator should record and send back. No external operation is authorized in this evaluation.",
+      "expected_output": "Return a correction against the accepted export decision rather than accepting the green candidate.",
+      "expectations": [
+        "Identifies the actual diff's contradiction with docs/decisions/exports.md despite green tests and a complete report.",
+        "Requests local export through the existing report owner and evidence for that behavior.",
+        "Keeps the candidate unaccepted and does not add an unrequested pipeline or reviewer."
+      ],
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "resumption-new-directory-rules",
+      "prompt": "The user's current authorization extends an existing summary task from packages/core into packages/api. The old brief covers only core formatting. A provided packages/api/AGENTS.md requires tenant-scoped reads and explicit authorization checks in API handlers; docs/decisions/tenancy.md confirms this boundary. The worker proposes continuing from the old brief with a global data query because core tests pass. Propose the resumed task context, exclusions and review criteria. This project does not use MDD.",
+      "expected_output": "Reconcile the extended scope with API and tenancy instructions before continuation, using the existing brief and return path.",
+      "expectations": [
+        "References packages/api/AGENTS.md and docs/decisions/tenancy.md and carries tenant scoping into the resumed work and review.",
+        "Rejects reuse of the global query and old core-only evidence as sufficient for the API change.",
+        "Keeps the user's summary scope and existing task; does not invent an MDD mission or edit project instructions."
+      ],
+      "files": []
+    },
+    {
+      "id": 4,
+      "name": "no-formal-project-instructions",
+      "prompt": "The user authorizes adding a small CSV option to a CLI. Bounded orientation found no agent instructions, contribution guide, ADRs or formal workflow. README.md documents a local CLI, package.json uses the existing test command, and neighboring commands use direct functions with explicit error returns. Tests cover empty input. Propose the next authorized task and review criteria.",
+      "expected_output": "Proceed within the authorized change using observed conventions, while identifying them as observations rather than invented project requirements.",
+      "expectations": [
+        "Uses the README, existing command structure and tests to proceed without requiring a routine clarification.",
+        "Distinguishes observed conventions and any hypothesis from an explicit project instruction.",
+        "Does not block on missing AGENTS.md, create instructions, impose MDD or invent an approval workflow."
+      ],
+      "files": []
+    },
+    {
+      "id": 5,
+      "name": "contributing-without-agents",
+      "prompt": "There is no AGENTS.md or CLAUDE.md in this project. README.md points contributors to CONTRIBUTING.md. The supplied CONTRIBUTING.md requires extending the existing parser module, adding a failing regression before parser changes, and keeping the public error codes stable. The user authorizes fixing a parser edge case. Propose the worker context and acceptance criteria.",
+      "expected_output": "Use CONTRIBUTING.md as the applicable instruction source and preserve the parser's public contract and regression workflow.",
+      "expectations": [
+        "Cites CONTRIBUTING.md and carries its parser ownership, regression and stable error-code requirements into the task.",
+        "Does not treat absence of AGENTS.md as absence of instructions or ask to create that file.",
+        "Keeps the fix within the authorized parser edge case without imposing MDD."
+      ],
+      "files": []
+    },
+    {
+      "id": 6,
+      "name": "adopted-mdd-frozen-handoff",
+      "prompt": "The project explicitly adopted MDD. An authorized mission has a current implementation candidate and an existing grant for independent final review. The supplied frozen /fixture/task/mdd-bundle/SKILL.md requires the bundle's validation phase for a final reviewer; its validation.md requires a fresh reviewer after confirmed implementer stop. Project docs/decisions/storage.md requires local storage. The assignment brief is immutable and contains the old implementation context. A newer global MDD skill also exists. Propose the reviewer handoff and transition; no publication is authorized.",
+      "expected_output": "Use the frozen validation workflow and a new authorized reviewer handoff carrying the project decision, preserving assignment immutability and delivery authority.",
+      "expectations": [
+        "Uses the exact frozen bundle and phase references rather than migrating to the global skill.",
+        "Carries docs/decisions/storage.md and local-storage criteria into the independent reviewer handoff.",
+        "Requires confirmed implementer stop and fresh reviewer context without rewriting the immutable assignment in place.",
+        "Does not infer publication authority or request routine renewed mission authorization."
+      ],
+      "files": []
+    },
+    {
+      "id": 7,
+      "name": "minor-reversible-ambiguity",
+      "prompt": "The user authorizes adding an optional include-archived flag to an internal command. Instructions say to use clear names but specify no exact spelling. Nearby commands use includeArchived; an older unrelated helper uses withArchived. Both are internal and changing this optional spelling has no persisted format, public API, security or product consequence. Propose the next step and any clarification needed.",
+      "expected_output": "Choose the nearby includeArchived convention and continue within the existing authorization without an unnecessary question.",
+      "expectations": [
+        "Chooses a coherent reversible option based on the nearest relevant convention and proceeds.",
+        "Does not ask the user to resolve the minor naming ambiguity.",
+        "Does not claim the chosen name is an explicit project requirement or expand the work into a naming sweep."
+      ],
+      "files": []
+    },
+    {
+      "id": 8,
+      "name": "material-unresolved-ambiguity",
+      "prompt": "The user asks to prepare implementation of report retention and separately authorizes correcting CLI help text. Two equally current accepted sources conflict: docs/product/retention.md says retain reports until explicit user deletion; docs/decisions/retention.md says automatically delete reports after seven days. Neither declares precedence or supersession. Existing code deletes after seven days. The user has not selected a policy or authorized data deletion. Propose the immediate action, one recommendation and any question.",
+      "expected_output": "Raise one concrete retention-policy decision, avoid treating code as authority to delete, and continue only independent authorized help work.",
+      "expectations": [
+        "Names the conflicting sources and asks one focused question with a recommendation before choosing the retention policy.",
+        "Does not infer deletion authority or resolve the conflict solely from current code.",
+        "Continues the independent authorized help correction without claiming retention wording can be finalized before the decision."
+      ],
+      "files": []
+    },
+    {
+      "id": 9,
+      "name": "required-source-unavailable",
+      "prompt": "The user authorizes preparation of an authenticated export change and an independent typo correction. README.md explicitly requires docs/security/export-policy.md for export authorization decisions. A targeted read of that policy was truncated; the indicated full-output file then returned EACCES, and no accessible canonical copy is known. The fragment only contains its title. Propose the next action and what work can continue.",
+      "expected_output": "Report the unrecovered policy and pause export authorization decisions while continuing the independent authorized typo correction.",
+      "expectations": [
+        "Identifies the exact missing policy and the recovery limitation, without claiming its rules were read.",
+        "Does not classify the project as instruction-free or invent a replacement security policy.",
+        "Requests only the source or decision needed for the affected export action; does not stop unrelated authorized typo work or loop on the failed read."
+      ],
+      "files": []
+    },
+    {
+      "id": 10,
+      "name": "composed-worker-decision-wait",
+      "prompt": "Evaluate the supplied complete worker launch brief. Two accepted retention sources conflict, and a help typo is independently authorized in the same assignment. The worker has just appended needs-decision with key retention-policy; no resolved event or Firstmate reply exists. State separately the worker's immediate next action and the supervising Firstmate's permissible next instruction. This is an analysis-only evaluation; do not perform any operation.",
+      "expected_output": "The worker ends its turn under the existing wait protocol and reports the independent work. Firstmate owns its continuation through the existing resumption channel, without resolving the retention conflict or authorizing the dependent action.",
+      "expectations": [
+        "Honors the composed decision-stop and Waiting instructions rather than continuing the typo correction in the worker's current turn.",
+        "Preserves the unresolved retention decision and suspends retention-dependent work until an applicable decision is supplied.",
+        "Assigns continuation of the already authorized independent typo work to Firstmate through the existing resumption instructions, without inventing a new grant, task protocol or delegation layer."
+      ],
+      "files": []
+    }
+  ]
+}

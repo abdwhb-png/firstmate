@@ -631,8 +631,8 @@ test_ship_project_memory_wording() {
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" some-proj --mode no-mistakes >/dev/null 2>&1
   brief="$home/data/$id/brief.md"
   assert_present "$brief" "brief was not scaffolded"
-  assert_grep "loaded into every agent session" "$brief" \
-    "project-memory contract lost the per-session cost rationale"
+  assert_no_grep "loaded into every agent session" "$brief" \
+    "project-memory contract still claims universal instruction loading"
   assert_grep "only to correct information that is factually wrong" "$brief" \
     "project-memory contract lost the corrections-only bound"
   assert_grep "including information your own change made wrong" "$brief" \

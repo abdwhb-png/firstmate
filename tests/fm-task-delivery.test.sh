@@ -1281,6 +1281,8 @@ EOF
       assert_grep "$home/state/$id.inbox" "$brief" "$project_kind $kind omitted its exact steering inbox"
       assert_grep 'When this task works on Firstmate itself' "$brief" "$project_kind $kind made the exception unconditional"
       assert_grep 'Project instructions still govern the work wherever they do not conflict with this worker identity' "$brief" "$project_kind $kind displaced project guidance"
+      assert_grep "Read the project's applicable instructions and the assignment's referenced sources before working" "$brief" "$project_kind $kind omitted project orientation"
+      assert_grep 'report the conflict to firstmate before the affected action' "$brief" "$project_kind $kind omitted the project-conflict return"
       ! grep -q '^This section supersedes every earlier brief instruction about your role' "$brief" ||
         fail "$project_kind $kind revoked the brief's own role for a task that is not Firstmate"
       assert_no_grep '# Current worker role contract' "$home/data/$id/brief.md" "spawn rewrote the source brief"
@@ -1294,6 +1296,49 @@ EOF
     fail "Firstmate AGENTS.md does not disambiguate a launched worker before assigning the supervisor identity"
   cmp -s "$ROOT/AGENTS.md" "$home/AGENTS.md" || fail "worker spawn changed the primary contract"
   pass "fm-spawn: every legacy worker receives scoped role instructions without changing project or primary instructions"
+}
+
+test_project_conflict_respects_composed_wait_contract() {
+  local rec home proj fakebin kind id source brief out
+  rec=$(make_home project-conflict-wait)
+  IFS='|' read -r home proj fakebin <<EOF
+$rec
+EOF
+  : > "$home/config/wait-no-turns"
+  for kind in ship scout legacy; do
+    id="conflict-wait-$kind"
+    if [ "$kind" = scout ]; then
+      FM_HOME="$home" "$BRIEF" "$id" proj --scout >/dev/null || fail 'scout scaffold failed'
+    else
+      FM_HOME="$home" "$BRIEF" "$id" proj --mode local-only >/dev/null || fail 'ship scaffold failed'
+    fi
+    source="$home/data/$id/brief.md"
+    fill_brief_subsections "$source" \
+      'Prepare retention work and correct the independent help typo.' \
+      'Retention sources conflict; no deletion is authorized. The typo correction is independently authorized.'
+    if [ "$kind" = legacy ]; then
+      sed '/^Delivery contract: /d' "$source" > "$source.next"
+      mv "$source.next" "$source"
+      assert_no_grep 'Delivery contract: mode=' "$source" 'legacy fixture retained its modern contract marker'
+    fi
+    cp "$source" "$source.before"
+    if [ "$kind" = scout ]; then
+      out=$(run_spawn "$home" "$fakebin" "$id" "$proj" codex --scout)
+    else
+      out=$(run_spawn "$home" "$fakebin" "$id" "$proj" codex --mode local-only --yolo off)
+    fi
+    assert_not_contains "$out" 'could not render' "$kind conflict contract did not render"
+    brief="$home/data/$id/launch-brief.md"
+    assert_present "$brief" "$kind composed brief missing"
+    assert_grep 'firstmate owns continuation of that work through the existing resumption instructions' "$brief" "$kind conflict continuation has no coordinator owner"
+    assert_grep 'Keep the conflict open and the dependent action suspended' "$brief" "$kind conflict contract can clear an unresolved decision"
+    assert_grep 'needs-decision' "$brief" "$kind decision protocol missing"
+    assert_grep 'and stop. Firstmate will reply with the decision.' "$brief" "$kind decision-stop protocol changed"
+    assert_grep 'end your turn at once' "$brief" "$kind Waiting protocol missing"
+    assert_no_grep 'and continue independent authorized work' "$brief" "$kind role contract still contradicts the decision wait"
+    cmp -s "$source.before" "$source" || fail "$kind spawn rewrote its source brief"
+  done
+  pass 'fm-spawn: composed ship, scout and legacy briefs preserve decision waits and coordinator-owned continuation'
 }
 
 # The forge binding is orthogonal to the mode and to +yolo, exactly as +yolo is
@@ -2104,6 +2149,7 @@ fi
 
 test_manual_delivery_includes_examination
 test_registered_delivery_review
+test_project_conflict_respects_composed_wait_contract
 test_classic_delivery_checks_complete_committed_tree
 test_ship_spawn_requires_a_valid_delivery_contract
 test_scout_and_secondmate_refuse_delivery_flags

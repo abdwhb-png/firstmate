@@ -163,6 +163,7 @@ EOF
 Never inspect or change any other home's endpoint namespace; this authorization is limited to the exact task paths named by this brief.
 When this task works on Firstmate itself, the repository root `AGENTS.md` (also imported by `CLAUDE.md`) is project content and the supervisor contract for the firstmate managing you: follow this brief instead of that supervisor contract.
 Project instructions still govern the work wherever they do not conflict with this worker identity, including `CONTRIBUTING.md` and `firstmate-coding-guidelines` for Firstmate changes.
+Read the project's applicable instructions and the assignment's referenced sources before working; do not assume the harness loaded them. If applicable project requirements conflict with the assignment, report the conflict to firstmate before the affected action and list any independent work still authorized. Follow the brief's decision-wait and stop protocol; firstmate owns continuation of that work through the existing resumption instructions. Keep the conflict open and the dependent action suspended until an applicable decision resolves it.
 EOF
   printf "If the \`firstmate-coding-guidelines\` skill name does not resolve in this session, read \`%s/.agents/skills/firstmate-coding-guidelines/SKILL.md\` instead.\n" "$root"
 }
