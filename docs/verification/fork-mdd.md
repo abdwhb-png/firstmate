@@ -107,3 +107,22 @@ Git et les CLI MDD sont réels ; forge et agents sont simulés. Cela ne qualifie
 Le contrôle de livraison exige un examen enregistré pour les nouvelles tâches PR/MR, indépendamment de MDD et de la démonstration. Les tests couvrent absence, correction, changement de commit/base/brief/présentation/preuve et échec atomique de publication. Les comparaisons de têtes et écritures liées au commit examiné passent sur les trois forges simulées ; les tâches historiques gardent leur contrat. Les suites ciblées de livraison, DoD, sécurité PR, fusion PR, relance, MDD, livraison MDD et démonstration ont chacune un passage complet réussi. Le cycle portable est également vérifié avec la copie figée v0.6 et la nouvelle distribution v0.7 ; ses règles et cas de regroupement évoluent sans changement de schéma. Les 50 tests du validateur, TypeScript strict et verify:dist passent.
 
 Ces résultats utilisent Git réel et des frontières de forge et de harness simulées. Les nouvelles évaluations de skills sont préparées et structurellement vérifiées, sans exécution comparative de modèles. Aucun pilote, protocole distant supplémentaire, CI distante, publication ou bascule n’est qualifié par ces contrôles.
+
+## 2026-11-20 - Orientation du projet (fork-7)
+
+La branche `427056c4181c+fork-7` conserve la base officielle `427056c4181c41074ad24f051f79919330df0fa5`. Les vérifications locales du 19 novembre portent sur le [contrat d’orientation](../../AGENTS.md#intake-and-authority), les briefs émis et leur composition au lancement et à la reprise. Elles utilisent les vrais producteurs et Git ; les endpoints de workers sont simulés. La régression de composition a d’abord échoué sur l’absence de propriétaire de continuation, puis passé en conservant les instructions d’arrêt, le conflit ouvert et les briefs source.
+
+La suite complète des briefs, les cas ciblés de livraison et de relance, le contrôle documentaire et ShellCheck 0.11.0 avec analyse étendue passent. Les commandes ciblées de renouvellement sont :
+
+```sh
+bin/fm-test-run.sh tests/fm-brief.test.sh
+FM_TEST_ONLY=test_registered_delivery_review bin/fm-test-run.sh tests/fm-task-delivery.test.sh
+FM_TEST_ONLY=test_project_conflict_respects_composed_wait_contract bin/fm-test-run.sh tests/fm-task-delivery.test.sh
+FM_TEST_ONLY=test_relaunch_appends_the_progress_note_to_the_instructions bin/fm-test-run.sh tests/fm-control-relaunch.test.sh
+bin/fm-doc-audience-check.sh
+FM_LINT_JOBS=1 bin/fm-lint.sh bin/fm-brief.sh bin/fm-dod-lib.sh tests/fm-brief.test.sh tests/fm-task-delivery.test.sh
+```
+
+Le [catalogue d’évaluation](../../tests/fixtures/project-instructions-evals.json) couvre dix situations. Codex CLI 0.167.0 avec `gpt-6.1-sol`, effort `low`, a produit trois observations de référence déjà conformes, neuf observations candidates conformes et deux observations supplémentaires sur les briefs complets ship et ancien avec Waiting. Ces dernières distinguent l’arrêt du worker et la poursuite coordonnée du travail indépendant sans résolution prématurée du conflit. Les deux revues indépendantes concluent à l’absence de défaut restant et ont reconstitué les quatorze stdin à partir de leur assemblage conservé dans les preuves de tâche.
+
+Ces évaluations portent sur du contexte fourni, sans appel d’outil par le modèle. Elles ne reproduisent pas l’incident utilisateur et ne qualifient ni une mission supervisée réelle ni le chargement natif des instructions dans tous les harnais. La reconstruction couvre le stdin et les options CLI, pas tout le contexte interne du harnais. La CI distante sur le commit publié et la bascule d’installation restent des vérifications distinctes.

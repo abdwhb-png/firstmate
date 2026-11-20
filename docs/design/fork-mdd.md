@@ -2,6 +2,8 @@
 
 Cette conception correspond au plan autorisé le 14 octobre 2026. La première version est `2911a3bb6dd1+fork-1`, fondée sur le commit officiel complet `2911a3bb6dd1b41061fb4dc87738791bf78008f4`. Le fork natif est [abdwhb-png/firstmate](https://github.com/abdwhb-png/firstmate). Les vérifications courantes et leurs limites sont consignées dans [la qualification](../verification/fork-mdd.md). La version `2911a3bb6dd1+fork-2` a corrigé la reconnaissance de Pi et la supervision après arrêt. La version `65a9a51f099e+fork-3` conserve son ascendance et porte ces contrats sur la base officielle `65a9a51f099e91c5e2d05c9ae9c3d5e493d51762`. La branche `427056c4181c+fork-5` reprend les personnalisations de fork-4 sur la base officielle complète `427056c4181c41074ad24f051f79919330df0fa5`. La branche `427056c4181c+fork-6` conserve cette base et ajoute le retour supervisé des délégations, le contrôle du candidat avant revue et la sélection fiable des profils de lancement. Publication et installation restent des opérations distinctes.
 
+La branche `427056c4181c+fork-7` conserve la base officielle `427056c4181c41074ad24f051f79919330df0fa5` et relie l’orientation du projet, les briefs et l’examen des résultats aux sources applicables. Le contrat appartient à [l’entrée de tâche et aux briefs](../../AGENTS.md#intake-and-authority), au contrat worker émis par `fm-dod-lib` et à [ship-landing](../../.agents/skills/ship-landing/SKILL.md) ; la [qualification](../verification/fork-mdd.md#2026-11-20---orientation-du-projet-fork-7) distingue les preuves locales et leurs limites.
+
 ## Décisions retenues
 
 | Référence | Décision |
