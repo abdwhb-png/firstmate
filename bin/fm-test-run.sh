@@ -552,33 +552,33 @@ EOF
 # refresh procedure are owned by docs/fm-test-portable-shards.md.
 portable_parallel_weight_hints() {
   cat <<'EOF'
-tests/fm-arm-pretool-check.test.sh 33778
-tests/fm-backend-herdr.test.sh 36331
+tests/fm-arm-pretool-check.test.sh 35390
+tests/fm-backend-herdr.test.sh 50434
 tests/fm-backend-t3code.test.sh 239245
-tests/fm-brief.test.sh 10594
-tests/fm-captain-hold-lifecycle.test.sh 343658
+tests/fm-brief.test.sh 14683
+tests/fm-captain-hold-lifecycle.test.sh 570651
 tests/fm-cd-pretool-check.test.sh 16801
-tests/fm-composer-ghost.test.sh 2292
-tests/fm-composer-lib.test.sh 9521
-tests/fm-crew-state.test.sh 82058
+tests/fm-composer-ghost.test.sh 2311
+tests/fm-composer-lib.test.sh 23694
+tests/fm-crew-state.test.sh 98754
 tests/fm-ensure-agents-md.test.sh 895
-tests/fm-grok-harness.test.sh 7666
-tests/fm-herdr-lab.test.sh 18325
-tests/fm-lint.test.sh 252498
+tests/fm-grok-harness.test.sh 8278
+tests/fm-herdr-lab.test.sh 38198
+tests/fm-lint.test.sh 392178
 tests/fm-park.test.sh 70085
-tests/fm-pi-primary-types.test.sh 5426
-tests/fm-pr-merge.test.sh 300199
-tests/fm-review-diff.test.sh 4134
-tests/fm-send-popup-settle.test.sh 6624
-tests/fm-send-settle.test.sh 2310
-tests/fm-send-strict.test.sh 4804
-tests/fm-spawn-batch.test.sh 2987
-tests/fm-supervision-instructions.test.sh 809
+tests/fm-pi-primary-types.test.sh 18048
+tests/fm-pr-merge.test.sh 875490
+tests/fm-review-diff.test.sh 19479
+tests/fm-send-popup-settle.test.sh 10225
+tests/fm-send-settle.test.sh 3416
+tests/fm-send-strict.test.sh 7299
+tests/fm-spawn-batch.test.sh 4364
+tests/fm-supervision-instructions.test.sh 1476
 tests/fm-t3-mcp.test.sh 57613
-tests/fm-test-run.test.sh 156781
+tests/fm-test-run.test.sh 439335
 tests/fm-tmux-submit-busy.test.sh 2600
-tests/fm-transition-lib.test.sh 101
-tests/fm-x-mode.test.sh 29896
+tests/fm-transition-lib.test.sh 281
+tests/fm-x-mode.test.sh 40755
 EOF
 }
 
@@ -600,39 +600,39 @@ portable_parallel_lane_weight() {
 # its own header owns temporary dependency provisioning.
 list_portable_parallel_1() {
   cat <<'EOF'
-tests/fm-captain-hold-lifecycle.test.sh
-tests/fm-backend-t3code.test.sh
-tests/fm-crew-state.test.sh
+tests/fm-pr-merge.test.sh
+tests/fm-lint.test.sh
 tests/fm-park.test.sh
 tests/fm-t3-mcp.test.sh
-tests/fm-herdr-lab.test.sh
-tests/fm-cd-pretool-check.test.sh
-tests/fm-grok-harness.test.sh
+tests/fm-x-mode.test.sh
+tests/fm-arm-pretool-check.test.sh
 tests/fm-pi-primary-types.test.sh
-tests/fm-review-diff.test.sh
+tests/fm-brief.test.sh
+tests/fm-grok-harness.test.sh
+tests/fm-spawn-batch.test.sh
 tests/fm-tmux-submit-busy.test.sh
-tests/fm-composer-ghost.test.sh
-tests/fm-transition-lib.test.sh
+tests/fm-supervision-instructions.test.sh
 EOF
 }
 
 # Portable parallel shard 2: the complementary LPT half of the proven set.
 list_portable_parallel_2() {
   cat <<'EOF'
-tests/fm-pr-merge.test.sh
-tests/fm-lint.test.sh
+tests/fm-captain-hold-lifecycle.test.sh
 tests/fm-test-run.test.sh
+tests/fm-backend-t3code.test.sh
+tests/fm-crew-state.test.sh
 tests/fm-backend-herdr.test.sh
-tests/fm-arm-pretool-check.test.sh
-tests/fm-x-mode.test.sh
-tests/fm-brief.test.sh
+tests/fm-herdr-lab.test.sh
 tests/fm-composer-lib.test.sh
+tests/fm-review-diff.test.sh
+tests/fm-cd-pretool-check.test.sh
 tests/fm-send-popup-settle.test.sh
 tests/fm-send-strict.test.sh
-tests/fm-spawn-batch.test.sh
 tests/fm-send-settle.test.sh
+tests/fm-composer-ghost.test.sh
 tests/fm-ensure-agents-md.test.sh
-tests/fm-supervision-instructions.test.sh
+tests/fm-transition-lib.test.sh
 EOF
 }
 
